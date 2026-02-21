@@ -1,0 +1,4 @@
+.venv/
+.venv_tts/
+out/
+__pycache__/

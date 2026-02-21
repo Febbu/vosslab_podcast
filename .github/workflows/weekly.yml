@@ -1,0 +1,35 @@
+name: Weekly Vosslab Digest
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  build-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate digest and script
+        env:
+          GITHUB_USER: vosslab
+          WINDOW_DAYS: "7"
+          OUTPUT_DIR: out
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: python fetch_and_script.py
+
+      - name: Upload outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: vosslab-digest
+          path: out/

@@ -1,0 +1,111 @@
+Codex Project Transcript
+Date: 2026-02-20
+Location: /Users/pierre/job_campus/vosslab_podcast
+
+Project Goal
+- Build an automated weekly "podcast-style" summary of GitHub activity for user `vosslab`.
+- Start simple: public repos only, last 7 days, repo-level activity only.
+- Exclude forks for reporting.
+- Later: generate narrated audio with Qwen3-TTS using multiple voices.
+
+User Requirements Confirmed
+- Weekly window: always last 7 days.
+- Scope phase 1: original repos only (`fork=false`), repo-level updates only.
+- Output should be automation-friendly and easy to extend.
+- Use GitHub Actions for unattended weekly runs.
+- English-only TTS initially.
+- Keep host/analyst voices consistent each week; allow guest voice override sometimes.
+- Use a separate Python environment for TTS; Conda chosen.
+
+What Was Verified During Chat
+- Repo `darrenoakey/tts` was checked and not identified as an Apple built-in TTS podcast-releases tool.
+- User provided API JSON for `sort=created` and `sort=pushed`.
+- Weekly digest for Feb 10-17, 2026 (UTC) was derived from provided data.
+
+Files Created/Updated in This Project
+- fetch_and_script.py
+  - Fetches GitHub repos via API (created + pushed).
+  - Filters last N days (default 7), excludes forks.
+  - Writes `out/digest.json` and `out/script.txt`.
+- .github/workflows/weekly.yml
+  - Scheduled weekly run (Monday 09:00 UTC) + manual dispatch.
+  - Uploads `out/` as workflow artifact.
+- requirements.txt
+  - Python dependency for digest script (`requests`).
+- .gitignore
+  - Ignores `.venv/`, `out/`, `__pycache__/`.
+- README.md
+  - Setup and usage for digest + TTS flow.
+- tts_generate.py
+  - Reads `out/script.txt` role lines (`HOST:`, `ANALYST:`, `GUEST:`).
+  - Uses Qwen3-TTS CustomVoice model to synthesize per-role audio.
+  - Writes `out/episode.wav`.
+- voices.json
+  - Stores stable role voices and optional guest override.
+
+Local Test Results
+- Digest script local run succeeded on user machine:
+  - `out/digest.json` created.
+  - `out/script.txt` created.
+- Sandbox test initially failed due to network restrictions for pip in this environment.
+- User local environment had internet and installed dependencies successfully.
+
+Current Voice Config
+- voices.json defaults:
+  - host_voice: speaker_1
+  - analyst_voice: speaker_2
+  - guest_voice: speaker_3
+  - guest_voice_override: null
+
+Current Status
+- Weekly text digest automation: implemented.
+- Weekly publishing: NOT implemented.
+- TTS script: implemented, needs local model/runtime setup and test run.
+- MP3 conversion: not yet wired (current output is WAV).
+
+How To Continue Next Session
+1. Run weekly digest locally:
+   - `python fetch_and_script.py`
+2. Set up Conda TTS env and run audio generation:
+   - `conda create -n qwen3-tts python=3.12 -y`
+   - `conda activate qwen3-tts`
+   - `pip install -U qwen-tts soundfile`
+   - `python tts_generate.py`
+3. Validate `out/episode.wav` quality and role voice mapping.
+4. Add ffmpeg step to produce `out/episode.mp3`.
+5. Add publishing step (optional): storage/feed/podcast host.
+
+Notes for Future Codex
+- User prefers concise, direct implementation steps.
+- Keep solution pragmatic and incremental.
+- Maintain this file as a running context log after each major session.
+
+---
+Session Update: 2026-02-20 (Codex Context Hardening)
+
+What was actively done
+- Added persistent transcript file:
+  - `CODEX_CHAT_TRANSCRIPT.txt`
+- Added project-level agent instructions:
+  - `AGENTS.md`
+- Verified transcript exists and contains prior project decisions and implementation status.
+
+Why this was added
+- Ensure future Codex sessions in this folder can recover context quickly.
+- Reduce repeated setup/explanation in each new session.
+
+Current project state
+- Weekly digest automation exists (`fetch_and_script.py` + GitHub Actions schedule).
+- Local digest test previously succeeded (`out/digest.json`, `out/script.txt`).
+- TTS script exists (`tts_generate.py`) with role voice config (`voices.json`).
+- Publishing step is still not implemented.
+
+Immediate next steps
+1. Run TTS environment setup (Conda) and execute `tts_generate.py`.
+2. Validate generated audio quality and role-to-voice mapping.
+3. Add optional WAV->MP3 conversion (ffmpeg).
+4. Decide publishing target (artifact only vs hosted feed).
+
+Instruction for future sessions
+- Start by reading this transcript and `AGENTS.md`.
+- Append a dated “Session Update” block after major progress.

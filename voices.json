@@ -1,0 +1,6 @@
+{
+  "host_voice": "speaker_1",
+  "analyst_voice": "speaker_2",
+  "guest_voice": "speaker_3",
+  "guest_voice_override": null
+}
