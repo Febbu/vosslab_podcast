@@ -109,3 +109,23 @@ Immediate next steps
 Instruction for future sessions
 - Start by reading this transcript and `AGENTS.md`.
 - Append a dated “Session Update” block after major progress.
+
+---
+Session Update: 2026-02-21 (Repo Initialization + GitHub Publish)
+
+What changed
+- Updated `.gitignore` to exclude `.venv_tts/` in addition to existing ignores.
+- Created initial git commit on `main` with current project files.
+- Created and published a new GitHub repository:
+  - `https://github.com/Febbu/vosslab_podcast`
+- Added remote `origin` and pushed `main`.
+
+What was tested
+- Verified git commit creation succeeded.
+- Verified GitHub repo creation and first push succeeded.
+- Verified local `main` tracks `origin/main`.
+
+Next actions
+1. Implement modular daily pipeline (`logs -> outline -> blog -> script -> audio`) as separate scripts.
+2. Add daily GitHub Actions workflow for artifact chaining.
+3. Integrate external TTS wrapper (`darrenoakey/tts`) in the final audio step.
