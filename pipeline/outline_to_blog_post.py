@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import math
 import os
 import re
-import sys
 from datetime import datetime
 
+from podlib import outline_draft_cache
+from podlib import outline_llm
 from podlib import pipeline_settings
 from podlib import pipeline_text_utils
 
@@ -70,27 +70,26 @@ def parse_args() -> argparse.Namespace:
 		default=None,
 		help="Maximum generation tokens (defaults from settings.yaml).",
 	)
+	parser.add_argument(
+		"--repo-draft-cache-dir",
+		default="out/blog_repo_drafts",
+		help="Directory for per-repo intermediate blog draft cache files.",
+	)
+	parser.add_argument(
+		"--continue",
+		dest="continue_mode",
+		action="store_true",
+		help="Reuse cached per-repo blog drafts when available (default: enabled).",
+	)
+	parser.add_argument(
+		"--no-continue",
+		dest="continue_mode",
+		action="store_false",
+		help="Disable per-repo blog draft cache reuse.",
+	)
+	parser.set_defaults(continue_mode=True)
 	args = parser.parse_args()
 	return args
-
-
-#============================================
-def add_local_llm_wrapper_to_path() -> None:
-	"""
-	Add local-llm-wrapper path to sys.path when present.
-	"""
-	script_dir = os.path.dirname(os.path.abspath(__file__))
-	repo_root = os.path.dirname(script_dir)
-	candidates = [
-		os.path.join(repo_root, "local-llm-wrapper"),
-		os.path.join(repo_root, "pipeline", "local-llm-wrapper"),
-	]
-	for wrapper_repo in candidates:
-		if not os.path.isdir(wrapper_repo):
-			continue
-		if wrapper_repo not in sys.path:
-			sys.path.insert(0, wrapper_repo)
-		return
 
 
 #============================================
@@ -98,14 +97,7 @@ def describe_llm_execution_path(transport_name: str, model_override: str) -> str
 	"""
 	Describe configured LLM transport execution order.
 	"""
-	model_label = model_override or "auto"
-	if transport_name == "ollama":
-		return f"ollama(model={model_label})"
-	if transport_name == "apple":
-		return "apple(local foundation models)"
-	if transport_name == "auto":
-		return f"apple(local foundation models) -> ollama(model={model_label})"
-	return transport_name
+	return outline_llm.describe_llm_execution_path(transport_name, model_override)
 
 
 #============================================
@@ -113,21 +105,12 @@ def create_llm_client(transport_name: str, model_override: str, quiet: bool) -> 
 	"""
 	Create local-llm-wrapper client for blog generation.
 	"""
-	add_local_llm_wrapper_to_path()
-	import local_llm_wrapper.llm as llm
-
-	model_choice = llm.choose_model(model_override or None)
-	transports = []
-	if transport_name == "ollama":
-		transports.append(llm.OllamaTransport(model=model_choice))
-	elif transport_name == "apple":
-		transports.append(llm.AppleTransport())
-	elif transport_name == "auto":
-		transports.append(llm.AppleTransport())
-		transports.append(llm.OllamaTransport(model=model_choice))
-	else:
-		raise RuntimeError(f"Unsupported llm transport: {transport_name}")
-	return llm.LLMClient(transports=transports, quiet=quiet)
+	return outline_llm.create_llm_client(
+		__file__,
+		transport_name,
+		model_override,
+		quiet,
+	)
 
 
 #============================================
@@ -179,10 +162,7 @@ def compute_repo_pass_word_target(repo_count: int, word_limit: int) -> int:
 	"""
 	Compute per-repo generation target using multi-pass heuristic.
 	"""
-	if repo_count <= 1:
-		return word_limit
-	raw_target = math.ceil((2 * word_limit) / (repo_count - 1))
-	return max(100, raw_target)
+	return outline_llm.compute_incremental_target(repo_count, word_limit, 100)
 
 
 #============================================
@@ -198,8 +178,9 @@ def build_blog_markdown_prompt(outline: dict, word_limit: int) -> str:
 		"Required format:\n"
 		"- Markdown only (no HTML).\n"
 		"- One H1 title chosen by you.\n"
+		"- Write in human-readable paragraph form.\n"
 		"- Keep structure simple and readable; avoid outline-style section dumping.\n"
-		"- Use short paragraphs and occasional bullets only when they improve clarity.\n"
+		"- Use short paragraphs; avoid bullet-list-heavy output.\n"
 		"- Keep factual and avoid invented details.\n"
 		"- Include repository names exactly as provided.\n"
 		"- Include concrete numbers from the data (commits/issues/PRs).\n"
@@ -254,6 +235,7 @@ def build_repo_blog_markdown_prompt(
 		"Required format:\n"
 		"- Markdown only (no HTML).\n"
 		"- One H1 title chosen by you.\n"
+		"- Write in human-readable paragraph form.\n"
 		"- Human-readable narrative style, not a deterministic outline dump.\n"
 		"- Include concrete repo metrics and specific commit/issue/PR details.\n"
 		"- Mention the repo name exactly as provided.\n"
@@ -272,7 +254,7 @@ def build_final_blog_trim_prompt(
 	word_limit: int,
 ) -> str:
 	"""
-	Build final trim prompt from the single best repo draft.
+	Build final assembly prompt from the single best repo draft.
 	"""
 	context = {
 		"user": outline.get("user", "unknown"),
@@ -287,11 +269,12 @@ def build_final_blog_trim_prompt(
 	return (
 		"You are revising one daily engineering blog draft.\n"
 		f"Target length: about {word_limit} words.\n"
-		"Use the selected draft below as source material and pare it down to the target length.\n"
+		"Use the selected draft below as source material and produce a final post near the target length.\n"
 		"Keep the strongest details and preserve a natural human tone.\n"
 		"Required format:\n"
 		"- Markdown only (no HTML).\n"
 		"- One H1 title chosen by you.\n"
+		"- Write in human-readable paragraph form.\n"
 		"- Natural, human-readable narrative with specific repo details and numbers.\n"
 		"Avoid:\n"
 		"- Writing-advice/meta content.\n"
@@ -299,6 +282,53 @@ def build_final_blog_trim_prompt(
 		"- Generic filler conclusions.\n\n"
 		"Context JSON:\n"
 		f"{context_json}\n"
+	)
+
+
+#============================================
+def build_final_blog_expand_prompt(
+	outline: dict,
+	candidate_drafts: list[dict],
+	word_limit: int,
+) -> str:
+	"""
+	Build final assembly prompt from top repo drafts.
+	"""
+	draft_blocks = []
+	for index, item in enumerate(candidate_drafts, start=1):
+		draft_blocks.append(
+			{
+				"candidate_index": index,
+				"repo_full_name": item.get("repo_full_name", ""),
+				"word_count": item.get("word_count", 0),
+				"markdown": item.get("markdown", ""),
+			}
+		)
+	context = {
+		"user": outline.get("user", "unknown"),
+		"window_start": outline.get("window_start", ""),
+		"window_end": outline.get("window_end", ""),
+		"totals": outline.get("totals", {}),
+		"candidate_drafts": draft_blocks,
+	}
+	context_json = json.dumps(context, ensure_ascii=True, indent=2)
+	min_words = max(1, word_limit // 2)
+	return (
+		"You are assembling the final daily engineering blog post.\n"
+		+ f"Target length: about {word_limit} words.\n"
+		+ f"Required hard range: between {min_words} and {word_limit * 2} words.\n"
+		+ "Use multiple repo drafts as source material and produce one coherent final post near the target length.\n"
+		+ "Required format:\n"
+		+ "- Markdown only (no HTML).\n"
+		+ "- One H1 title chosen by you.\n"
+		+ "- Write in human-readable paragraph form.\n"
+		+ "- Keep concrete repo names, metrics, and specific activity details.\n"
+		+ "Avoid:\n"
+		+ "- Writing-advice/meta content.\n"
+		+ "- Reader call-to-action text.\n"
+		+ "- Generic filler conclusions.\n\n"
+		+ "Context JSON:\n"
+		+ f"{context_json}\n"
 	)
 
 
@@ -361,12 +391,76 @@ def blog_quality_issue(markdown_text: str) -> str:
 
 
 #============================================
+def blog_word_band_issue(markdown_text: str, target_words: int) -> str:
+	"""
+	Return issue string when output falls outside hard acceptance band.
+	"""
+	if target_words < 1:
+		return "invalid target"
+	word_count = pipeline_text_utils.count_words(markdown_text)
+	min_words = max(1, target_words // 2)
+	max_words = target_words * 2
+	if word_count < min_words:
+		return f"word count below lower bound ({word_count} < {min_words})"
+	if word_count > max_words:
+		return f"word count above upper bound ({word_count} > {max_words})"
+	return ""
+
+
+#============================================
+def enforce_blog_word_band(
+	client,
+	markdown_text: str,
+	source_prompt: str,
+	word_limit: int,
+	max_tokens: int,
+	logger=None,
+	purpose: str = "blog word-band repair",
+) -> str:
+	"""
+	Enforce hard blog word-band with one corrective regeneration pass.
+	"""
+	issue = blog_word_band_issue(markdown_text, word_limit)
+	if not issue:
+		return markdown_text
+	current_words = pipeline_text_utils.count_words(markdown_text)
+	min_words = max(1, word_limit // 2)
+	max_words = word_limit * 2
+	if logger:
+		logger(f"Word-band check failed ({issue}); regenerating once.")
+	retry_prompt = (
+		"Regenerate this blog post in clean Markdown.\n"
+		+ f"Last entry was {current_words} words, but target is {word_limit} words. "
+		+ "Please do better on length control.\n"
+		+ f"Required hard range: between {min_words} and {max_words} words.\n"
+		+ f"Target around {word_limit} words.\n"
+		+ "Keep natural paragraph form and factual repository details.\n\n"
+		+ source_prompt
+	)
+	retry_markdown = client.generate(
+		prompt=retry_prompt,
+		purpose=purpose,
+		max_tokens=max_tokens,
+	).strip()
+	retry_markdown = normalize_markdown_blog(retry_markdown)
+	retry_issue = blog_quality_issue(retry_markdown)
+	if retry_issue:
+		raise RuntimeError(f"blog generation unusable after word-band retry: {retry_issue}")
+	band_issue = blog_word_band_issue(retry_markdown, word_limit)
+	if band_issue:
+		raise RuntimeError(f"blog generation rejected by hard word band: {band_issue}")
+	return retry_markdown
+
+
+#============================================
 def generate_blog_markdown_with_llm(
 	outline: dict,
 	transport_name: str,
 	model_override: str,
 	max_tokens: int,
 	word_limit: int,
+	continue_mode: bool,
+	repo_draft_cache_dir: str,
 	logger=None,
 ) -> str:
 	"""
@@ -375,6 +469,15 @@ def generate_blog_markdown_with_llm(
 	client = create_llm_client(transport_name, model_override, quiet=False)
 	repo_buckets = list(outline.get("repo_activity", []))[:8]
 	repo_total = len(repo_buckets)
+	run_fingerprint = outline_draft_cache.compute_run_fingerprint(
+		outline,
+		stage_name="blog_repo_draft",
+		target_value=word_limit,
+		extra={
+			"transport_name": transport_name,
+			"model_override": model_override or "",
+		},
+	)
 
 	candidate_drafts: list[dict] = []
 	if repo_total > 0:
@@ -386,6 +489,32 @@ def generate_blog_markdown_with_llm(
 			)
 		for index, repo_bucket in enumerate(repo_buckets, start=1):
 			repo_name = repo_bucket.get("repo_full_name", "")
+			cache_path = outline_draft_cache.build_cache_path(
+				repo_draft_cache_dir,
+				repo_name,
+				run_fingerprint,
+			)
+			if continue_mode:
+				cached = outline_draft_cache.load_cached_draft(cache_path)
+				if isinstance(cached, dict):
+					cached_markdown = normalize_markdown_blog(str(cached.get("markdown", "")))
+					cached_issue = blog_quality_issue(cached_markdown)
+					if not cached_issue:
+						cached_words = pipeline_text_utils.count_words(cached_markdown)
+						if logger:
+							logger(
+								f"Repo draft {index}/{repo_total} cache hit for {repo_name} "
+								+ f"({cached_words} words)."
+							)
+						candidate_drafts.append(
+							{
+								"repo_full_name": repo_name,
+								"markdown": cached_markdown,
+								"word_count": cached_words,
+								"score": 1000 - abs(cached_words - repo_word_target),
+							}
+						)
+						continue
 			if logger:
 				logger(
 					f"Generating repo draft {index}/{repo_total} for {repo_name} "
@@ -413,6 +542,7 @@ def generate_blog_markdown_with_llm(
 				retry_prompt = (
 					"Regenerate this repo draft as clean Markdown.\n"
 					+ f"Target around {repo_word_target} words.\n"
+					+ "Please do better.\n"
 					+ "No reader call-to-action. No meta blogging advice.\n\n"
 					+ prompt
 				)
@@ -434,6 +564,19 @@ def generate_blog_markdown_with_llm(
 				logger(
 					f"Repo draft {index}/{repo_total} accepted ({repo_words} words)."
 				)
+			outline_draft_cache.save_cached_draft(
+				cache_path,
+				{
+					"repo_full_name": repo_name,
+					"repo_index": index,
+					"repo_total": repo_total,
+					"word_count": repo_words,
+					"word_target": repo_word_target,
+					"markdown": repo_markdown,
+					"generated_at_local": datetime.now().isoformat(),
+					"run_fingerprint": run_fingerprint,
+				},
+			)
 			candidate_drafts.append(
 				{
 					"repo_full_name": repo_name,
@@ -460,6 +603,7 @@ def generate_blog_markdown_with_llm(
 			fallback_retry_prompt = (
 				"Regenerate the blog post as clean Markdown.\n"
 				+ f"Target around {word_limit} words.\n\n"
+				+ "Please do better.\n\n"
 				+ fallback_prompt
 			)
 			fallback_retry = client.generate(
@@ -472,23 +616,49 @@ def generate_blog_markdown_with_llm(
 				if logger:
 					retry_words = pipeline_text_utils.count_words(fallback_retry)
 					logger(f"Fallback retry produced {retry_words} words.")
-				return fallback_retry
-		return fallback
+				return enforce_blog_word_band(
+					client,
+					fallback_retry,
+					fallback_prompt,
+					word_limit,
+					max_tokens,
+					logger=logger,
+					purpose="daily markdown blog fallback word-band retry",
+				)
+		return enforce_blog_word_band(
+			client,
+			fallback,
+			fallback_prompt,
+			word_limit,
+			max_tokens,
+			logger=logger,
+			purpose="daily markdown blog fallback word-band retry",
+		)
 
 	candidate_drafts.sort(key=lambda item: item.get("score", 0), reverse=True)
 	best_candidate = candidate_drafts[0]
+	min_words = max(1, word_limit // 2)
+	use_multi_source_assembly = best_candidate.get("word_count", 0) < min_words
 	if logger:
 		logger(
-			"Selected best repo draft for final trim: "
+			"Selected best repo draft for final assembly: "
 			+ f"{best_candidate.get('repo_full_name', '')} "
 			+ f"({best_candidate.get('word_count', 0)} words)."
 		)
-	final_prompt = build_final_blog_trim_prompt(outline, best_candidate, word_limit)
+	if use_multi_source_assembly:
+		top_candidates = candidate_drafts[: min(4, len(candidate_drafts))]
+		final_prompt = build_final_blog_expand_prompt(outline, top_candidates, word_limit)
+		if logger:
+			logger(
+				"Best draft is below lower bound; using multi-draft final assembly prompt."
+			)
+	else:
+		final_prompt = build_final_blog_trim_prompt(outline, best_candidate, word_limit)
 	if logger:
-		logger(f"Generating final trim pass (target={word_limit} words).")
+		logger(f"Generating final assembly pass (target={word_limit} words).")
 	final_markdown = client.generate(
 		prompt=final_prompt,
-		purpose="daily markdown blog final trim",
+		purpose="daily markdown blog final assembly",
 		max_tokens=max_tokens,
 	).strip()
 	final_markdown = normalize_markdown_blog(final_markdown)
@@ -499,6 +669,7 @@ def generate_blog_markdown_with_llm(
 		retry_prompt = (
 			"Regenerate the final blog post as clean Markdown.\n"
 			+ f"Target around {word_limit} words.\n"
+			+ "Please do better.\n"
 			+ "No reader call-to-action. No blogging advice content.\n\n"
 			+ final_prompt
 		)
@@ -508,9 +679,18 @@ def generate_blog_markdown_with_llm(
 			max_tokens=max_tokens,
 		).strip()
 		final_markdown = normalize_markdown_blog(final_markdown)
+	final_markdown = enforce_blog_word_band(
+		client,
+		final_markdown,
+		final_prompt,
+		word_limit,
+		max_tokens,
+		logger=logger,
+		purpose="daily markdown blog final word-band retry",
+	)
 	if logger:
 		final_words = pipeline_text_utils.count_words(final_markdown)
-		logger(f"Final trim output ready ({final_words} words; target={word_limit}).")
+		logger(f"Final assembly output ready ({final_words} words; target={word_limit}).")
 	return final_markdown
 
 
@@ -580,7 +760,11 @@ def main() -> None:
 	)
 	log_step("Loading outline JSON.")
 	outline = load_outline(args.input)
-	log_step("Generating Markdown blog post with incremental drafts and final trim pass.")
+	log_step(
+		"Repo draft cache: "
+		+ f"dir={os.path.abspath(args.repo_draft_cache_dir)}, continue={args.continue_mode}"
+	)
+	log_step("Generating Markdown blog post with incremental drafts and final assembly pass.")
 	try:
 		markdown = generate_blog_markdown_with_llm(
 			outline,
@@ -588,6 +772,8 @@ def main() -> None:
 			model_override=model_override,
 			max_tokens=max_tokens,
 			word_limit=args.word_limit,
+			continue_mode=args.continue_mode,
+			repo_draft_cache_dir=os.path.abspath(args.repo_draft_cache_dir),
 			logger=log_step,
 		)
 	except RuntimeError as error:
@@ -607,10 +793,6 @@ def main() -> None:
 
 	word_count = pipeline_text_utils.count_words(markdown)
 	log_step(f"Wrote {output_path} ({word_count} words; target={args.word_limit})")
-	if word_count > args.word_limit:
-		log_step(
-			"Word target exceeded; keeping output as-is because this stage treats limit as target."
-		)
 
 
 if __name__ == "__main__":

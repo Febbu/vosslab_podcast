@@ -16,6 +16,8 @@ When making edits, document them in docs/CHANGELOG.md.
 When in doubt, implement the changes the user asked for rather than waiting for a response; the user is not the best reader and will likely miss your request and then be confused why it was not implemented or fixed.
 When changing code always run focused tests on changed code, documentation does not require tests.
 Agents may find pytest programs to run in the tests folder, including smoke tests and pyflakes runner scripts. These should all be capable of the -k flag, such as pytest test_feature.py -k changed_file.py
+use source_me.sh && pytest tests/
+
 
 ## Python Environment
 AI agents (Codex/Claude) must run Python using `source source_me.sh && python3` (use Python 3.12 only).

@@ -9,8 +9,8 @@ Generates a weekly multi-channel content package from GitHub activity.
 - Parse the large JSONL file and write a summary outline (no length limit).
 3. Content generation from outline
 - `pipeline/outline_to_blog_post.py`: write an LLM-generated Markdown blog post for MkDocs (target 500 words).
-- `pipeline/outline_to_bluesky_post.py`: write a Bluesky post (max 140 characters).
-- `pipeline/outline_to_podcast_script.py`: write an N-speaker podcast script (max 500 words).
+- `pipeline/outline_to_bluesky_post.py`: write an LLM-generated Bluesky post (target 140 characters; final output is publish-safe trimmed).
+- `pipeline/outline_to_podcast_script.py`: write an LLM-generated N-speaker podcast script (target 500 words; final output is trimmed to fit).
 4. Audio rendering
 - `pipeline/script_to_audio.py`: multi-speaker Qwen TTS (`out/episode.wav`).
 - `pipeline/script_to_audio_say.py`: single-speaker macOS `say`/Siri-style render (`out/episode_siri.aiff`).
@@ -24,6 +24,9 @@ Generates a weekly multi-channel content package from GitHub activity.
 - `out/blog_post_YYYY-MM-DD.md` (Markdown blog post, date-stamped filename, target 500 words)
 - `out/bluesky_post.txt` (<= 140 characters)
 - `out/podcast_script.txt` (<= 500 words, N speakers)
+- `out/blog_repo_drafts/*.json` (per-repo cached blog intermediate drafts)
+- `out/bluesky_repo_drafts/*.json` (per-repo cached Bluesky intermediate drafts)
+- `out/podcast_repo_drafts/*.json` (per-repo cached podcast intermediate drafts)
 - `out/episode.wav` (or equivalent audio output)
 - `out/episode_siri.aiff` (optional single-speaker macOS `say` output)
 
@@ -72,6 +75,8 @@ CLI flags still override settings values when provided.
 - `pipeline/outline_github_data.py` uses `local-llm-wrapper` to generate:
   - `llm_repo_outline` for each repo
   - `llm_global_outline` for the overall week
+- `pipeline/outline_to_blog_post.py`, `pipeline/outline_to_bluesky_post.py`, and
+  `pipeline/outline_to_podcast_script.py` now also use `local-llm-wrapper`.
 - Recommended placement for vendored wrapper code: repo root at `local-llm-wrapper/`.
 - `pipeline/local-llm-wrapper/` is also supported by the loader if you move it later.
 - `apple-foundation-models` is a required Python dependency in `pip_requirements.txt`.
@@ -85,6 +90,8 @@ CLI flags still override settings values when provided.
   - `--llm-model <model-name>`
   - `--llm-max-tokens <int>`
   - `--llm-repo-limit <int>`
+  - `--continue` (default) / `--no-continue` for per-repo draft cache reuse in `outline_to_*` stages
+  - `--repo-draft-cache-dir <path>` for stage-specific intermediate draft cache location
 
 ## Outline sharding for LLM token limits
 - `pipeline/outline_github_data.py` writes one outline shard per repo by default.

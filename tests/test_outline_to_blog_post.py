@@ -58,6 +58,7 @@ def test_build_blog_markdown_prompt_includes_markdown_constraints() -> None:
 	assert "vosslab/alpha_repo" in prompt
 	assert "Do not ask readers to comment" in prompt
 	assert "daily engineering blog update" in prompt
+	assert "human-readable paragraph form" in prompt
 
 
 #============================================
@@ -99,6 +100,8 @@ def test_generate_blog_markdown_with_llm_retries_for_limit(monkeypatch) -> None:
 		model_override="",
 		max_tokens=1200,
 		word_limit=50,
+		continue_mode=False,
+		repo_draft_cache_dir="out/test_blog_repo_drafts",
 	)
 	assert pipeline_text_utils.count_words(markdown) >= 50
 	assert markdown.startswith("# Title")
@@ -122,6 +125,59 @@ def test_blog_quality_issue_allows_short_markdown() -> None:
 	"""
 	issue = outline_to_blog_post.blog_quality_issue("# Title\n\nTiny update.")
 	assert issue == ""
+
+
+#============================================
+def test_blog_word_band_issue_bounds() -> None:
+	"""
+	Hard word band should enforce [0.5x, 2x] target bounds.
+	"""
+	assert (
+		outline_to_blog_post.blog_word_band_issue("# T\n\n" + ("w " * 100).strip(), 100)
+		== ""
+	)
+	assert "below lower bound" in outline_to_blog_post.blog_word_band_issue(
+		"# T\n\n" + ("w " * 40).strip(),
+		100,
+	)
+	assert "above upper bound" in outline_to_blog_post.blog_word_band_issue(
+		"# T\n\n" + ("w " * 230).strip(),
+		100,
+	)
+
+
+#============================================
+def test_generate_blog_markdown_with_llm_rejects_out_of_band(monkeypatch) -> None:
+	"""
+	Generator should raise when final output remains outside hard word band.
+	"""
+	responses = [
+		"# Title\n\n" + ("word " * 80).strip(),
+		"# Title\n\nshort text",
+		"# Title\n\nstill short",
+	]
+
+	class FakeClient:
+		def generate(self, prompt=None, messages=None, purpose=None, max_tokens=0):
+			return responses.pop(0)
+
+	def fake_create_client(transport_name: str, model_override: str, quiet: bool):
+		return FakeClient()
+
+	monkeypatch.setattr(outline_to_blog_post, "create_llm_client", fake_create_client)
+	try:
+		outline_to_blog_post.generate_blog_markdown_with_llm(
+			sample_outline(),
+			transport_name="ollama",
+			model_override="",
+			max_tokens=1200,
+			word_limit=100,
+			continue_mode=False,
+			repo_draft_cache_dir="out/test_blog_repo_drafts",
+		)
+		assert False, "Expected RuntimeError for hard word-band rejection"
+	except RuntimeError as error:
+		assert "hard word band" in str(error)
 
 
 #============================================

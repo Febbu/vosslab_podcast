@@ -163,14 +163,31 @@
 - `pipeline/outline_to_blog_post.py` blog generation flow now follows repo-by-repo incremental
   drafts using `max(100, ceil((2*word_limit)/(N-1)))`, selects the single best repo draft, then
   runs a final LLM trim pass targeting `word_limit`.
+- `pipeline/outline_to_bluesky_post.py` now uses `local-llm-wrapper` with the same incremental
+  repo-draft workflow (per-repo draft, best-draft selection, final trim pass) using
+  Bluesky-specific prompts and publish-safe final char trim.
+- `pipeline/outline_to_podcast_script.py` now uses `local-llm-wrapper` with the same incremental
+  repo-draft workflow (per-repo draft, best-draft selection, final trim pass) using
+  N-speaker podcast-specific prompts and speaker-line salvage.
 - `pipeline/outline_to_blog_post.py` progress logs now show stage-level generation steps
   (repo draft i/N, best-draft selection, final trim), plus configured LLM execution path.
+- `pipeline/outline_to_bluesky_post.py` and `pipeline/outline_to_podcast_script.py` now log
+  stage-level generation steps and configured LLM execution path.
+- Added `pipeline/podlib/outline_llm.py` to centralize shared local-llm-wrapper setup helpers
+  (`create_llm_client`, execution-path description, incremental-target formula).
+- Added `pipeline/podlib/outline_draft_cache.py` for reusable per-repo intermediate draft cache
+  helpers used by outline content stages.
+- `pipeline/outline_to_blog_post.py`, `pipeline/outline_to_bluesky_post.py`, and
+  `pipeline/outline_to_podcast_script.py` now support per-repo draft caching with
+  `--continue`/`--no-continue` (default continue) and `--repo-draft-cache-dir`.
 - `pipeline/outline_to_blog_post.py` now exits cleanly with progress logs when blog generation
   fails, instead of printing a traceback.
 - `tests/test_outline_to_blog_post.py` now includes coverage ensuring short valid Markdown is still
   accepted by blog quality checks.
 - `tests/test_outline_to_blog_post.py` now covers H1 salvage behavior for H2-leading and plain-text
   openings.
+- Added `tests/test_outline_to_bluesky_post.py` and `tests/test_outline_to_podcast_script.py` for
+  LLM orchestration coverage in non-blog outline stages.
 
 ### Validation
 - `python3 -m py_compile fetch_github_data.py outline_github_data.py outline_to_blog_post.py`

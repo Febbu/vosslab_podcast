@@ -843,3 +843,47 @@ What was tested
 Next actions
 1. Run one local blog generation and confirm logs now clearly distinguish incremental draft passes
    from the final trim pass.
+
+---
+Session Update: 2026-02-22 (LLM Feature Parity + Repo Draft Cache for Outline-to Stages)
+
+What changed
+- Added shared LLM helper module `pipeline/podlib/outline_llm.py` to reduce duplicate setup code
+  across `outline_to_*` scripts:
+  - local-llm-wrapper path resolution
+  - configured execution-path description
+  - transport client creation
+  - incremental target formula helper
+- Added reusable draft-cache helper module `pipeline/podlib/outline_draft_cache.py`.
+- Updated `pipeline/outline_to_blog_post.py` to support per-repo intermediate draft cache reuse
+  with `--continue`/`--no-continue` (default continue) and `--repo-draft-cache-dir`.
+- Reworked `pipeline/outline_to_bluesky_post.py` to LLM orchestration parity:
+  - per-repo incremental drafts
+  - best-draft selection
+  - final trim pass
+  - settings-driven transport/model/token config
+  - explicit stage and execution-path logging
+  - per-repo draft cache reuse flags (`--continue`, `--repo-draft-cache-dir`)
+- Reworked `pipeline/outline_to_podcast_script.py` to LLM orchestration parity:
+  - per-repo incremental drafts
+  - best-draft selection
+  - final trim pass
+  - settings-driven transport/model/token config
+  - explicit stage and execution-path logging
+  - per-repo draft cache reuse flags (`--continue`, `--repo-draft-cache-dir`)
+  - speaker-line salvage and required-speaker coverage fallback
+- Added tests:
+  - `tests/test_outline_to_bluesky_post.py`
+  - `tests/test_outline_to_podcast_script.py`
+- Updated `README.md` and `docs/CHANGELOG.md` for new LLM + cache behavior.
+- Removed generated `__pycache__` directories from working tree after test runs.
+
+What was tested
+- `pytest -q tests/test_outline_to_blog_post.py tests/test_outline_to_bluesky_post.py tests/test_outline_to_podcast_script.py tests/test_content_pipeline_limits.py` (pass: `18 passed`)
+- `pytest -q tests/` (pass: `340 passed`)
+
+Next actions
+1. Run one real local pass of `outline_to_bluesky_post.py` and `outline_to_podcast_script.py` to
+   confirm cache-hit logs appear on immediate rerun.
+2. Optionally externalize Bluesky/podcast prompts to a `prompts/` folder for human editing parity
+   with your other repo pattern.
