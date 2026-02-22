@@ -1,4 +1,4 @@
-﻿# Vosslab Weekly Podcast Digest
+# Vosslab Weekly Podcast Digest
 
 Generates a weekly GitHub repo digest and a simple podcast-style script.
 
