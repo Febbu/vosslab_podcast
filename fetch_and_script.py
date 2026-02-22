@@ -75,7 +75,7 @@ def _render_script(digest: Dict[str, Any]) -> str:
     else:
         lines.append("GUEST: No repo-level pushes recorded in the last 7 days.")
 
-    lines.append("HOST: That’s the week. See you next episode.")
+    lines.append("HOST: That's the week. See you next episode.")
     return "\n".join(lines) + "\n"
 
 

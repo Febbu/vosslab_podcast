@@ -1,4 +1,4 @@
-# Vosslab Weekly Podcast Digest
+﻿# Vosslab Weekly Podcast Digest
 
 Generates a weekly GitHub repo digest and a simple podcast-style script.
 
@@ -31,15 +31,14 @@ To enable:
 3. The schedule can be edited in the workflow file.
 
 ## TTS (local, optional)
-This project includes `tts_generate.py` to read `out/script.txt` and generate `out/episode.wav` using Qwen3‑TTS. The recommended path is to install the official `qwen-tts` package in a clean Python 3.12 environment and use the lightweight CustomVoice model. citeturn0search0turn1search0
+This project includes `tts_generate.py` to read `out/script.txt` and generate `out/episode.wav` using Qwen3-TTS. The recommended path is to install the official `qwen-tts` package in a clean Python 3.12 environment and use the lightweight CustomVoice model. ?cite?turn0search0?turn1search0?
 
 ### TTS environment (Conda)
 ```bash
 conda create -n qwen3-tts python=3.12 -y
 conda activate qwen3-tts
-pip install -U qwen-tts soundfile
+pip install -r pip_requirements.txt
 ```
-citeturn0search0
 
 ### Generate audio
 ```bash

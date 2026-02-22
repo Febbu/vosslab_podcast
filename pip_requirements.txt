@@ -1,0 +1,5 @@
+requests
+soundfile
+torch
+numpy
+qwen_tts

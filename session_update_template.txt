@@ -1,24 +1,24 @@
 Session Update: YYYY-MM-DD (Short Title)
 
 What was actively done
-- 
+-
 
 Why this was done
-- 
+-
 
 Current project state
-- 
+-
 
 What was tested
-- 
+-
 
 Known gaps / blockers
-- 
+-
 
 Immediate next steps
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
 Notes for future sessions
-- 
+-

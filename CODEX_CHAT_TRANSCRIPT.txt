@@ -108,7 +108,7 @@ Immediate next steps
 
 Instruction for future sessions
 - Start by reading this transcript and `AGENTS.md`.
-- Append a dated “Session Update” block after major progress.
+- Append a dated "Session Update" block after major progress.
 
 ---
 Session Update: 2026-02-21 (Repo Initialization + GitHub Publish)
