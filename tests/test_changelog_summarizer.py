@@ -9,7 +9,7 @@ PIPELINE_DIR = os.path.join(REPO_ROOT, "pipeline")
 if PIPELINE_DIR not in sys.path:
 	sys.path.insert(0, PIPELINE_DIR)
 
-import changelog_summarizer
+from podlib import changelog_summarizer
 
 
 #============================================
@@ -17,14 +17,14 @@ def test_chunk_text_basic() -> None:
 	"""
 	Text longer than chunk_size should split into multiple overlapping chunks.
 	"""
-	# 9000 chars with chunk_size=3000 and overlap=500 -> step=2500
-	# chunks at: [0:3000], [2500:5500], [5000:8000], [7500:9000]
-	text = "a" * 9000
-	chunks = changelog_summarizer.chunk_text(text, chunk_size=3000, overlap=500)
-	assert len(chunks) >= 3
-	# each chunk except possibly the last should be 3000 chars
+	# 5000 chars with chunk_size=2250 and overlap=250 -> step=2000
+	# chunks at: [0:2250], [2000:4250], [4000:5000]
+	text = "a" * 5000
+	chunks = changelog_summarizer.chunk_text(text, chunk_size=2250, overlap=250)
+	assert len(chunks) >= 2
+	# each chunk except possibly the last should be 2250 chars
 	for chunk in chunks[:-1]:
-		assert len(chunk) == 3000
+		assert len(chunk) == 2250
 
 
 #============================================
@@ -33,7 +33,7 @@ def test_chunk_text_short() -> None:
 	Text shorter than chunk_size should return a single chunk.
 	"""
 	text = "short changelog entry"
-	chunks = changelog_summarizer.chunk_text(text, chunk_size=3000, overlap=500)
+	chunks = changelog_summarizer.chunk_text(text, chunk_size=2250, overlap=250)
 	assert len(chunks) == 1
 	assert chunks[0] == text
 
@@ -43,7 +43,7 @@ def test_chunk_text_empty() -> None:
 	"""
 	Empty text should return an empty list.
 	"""
-	chunks = changelog_summarizer.chunk_text("", chunk_size=3000, overlap=500)
+	chunks = changelog_summarizer.chunk_text("", chunk_size=2250, overlap=250)
 	assert chunks == []
 
 
@@ -53,13 +53,13 @@ def test_chunk_text_overlap() -> None:
 	Adjacent chunks should share overlapping content.
 	"""
 	# build text with identifiable content at overlap boundary
-	text = "A" * 2800 + "OVERLAP" + "B" * 2800
-	chunks = changelog_summarizer.chunk_text(text, chunk_size=3000, overlap=500)
+	# with chunk_size=2250, overlap=250 -> step=2000
+	# "OVERLAP" at position 2100 is in first chunk [0:2250] and second chunk [2000:4250]
+	text = "A" * 2100 + "OVERLAP" + "B" * 2100
+	chunks = changelog_summarizer.chunk_text(text, chunk_size=2250, overlap=250)
 	assert len(chunks) >= 2
 	# the overlap marker should appear in both first and second chunk
-	# first chunk: [0:3000] includes "OVERLAP" at position 2800
 	assert "OVERLAP" in chunks[0]
-	# second chunk starts at 2500, so it includes position 2800 too
 	assert "OVERLAP" in chunks[1]
 
 
@@ -89,14 +89,14 @@ def test_summarize_long_changelog_calls_llm() -> None:
 			call_count[0] += 1
 			return f"Summary of chunk {call_count[0]}."
 
-	# 7000 chars with chunk_size=3000, overlap=500 -> multiple chunks
+	# 7000 chars with chunk_size=2250, overlap=250 -> multiple chunks
 	long_text = "x" * 7000
 	result = changelog_summarizer.summarize_long_changelog(
 		client=FakeClient(),
 		entry_text=long_text,
 		threshold=6000,
-		chunk_size=3000,
-		overlap=500,
+		chunk_size=2250,
+		overlap=250,
 	)
 	# should have called the LLM for each chunk
 	assert call_count[0] >= 2

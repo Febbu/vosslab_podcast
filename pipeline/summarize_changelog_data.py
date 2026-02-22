@@ -4,19 +4,26 @@
 Reads the fetch-stage JSONL, finds repo_changelog records with long
 latest_entry fields, summarizes them using changelog_summarizer, and
 writes the updated JSONL back in place. Short entries and non-changelog
-records pass through unchanged.
+records pass through unchanged. Supports depth-based multi-draft
+generation via depth_orchestrator.
 """
 
+# Standard Library
 import argparse
 import json
 import os
+import random
+import re
 import tempfile
 from datetime import datetime
 
+# local repo modules
+from podlib import depth_orchestrator
 from podlib import outline_llm
 from podlib import pipeline_settings
 
-import changelog_summarizer
+from podlib import changelog_summarizer
+from podlib import prompt_loader
 
 
 DEFAULT_INPUT_PATH = "out/github_data.jsonl"
@@ -67,6 +74,42 @@ def parse_args() -> argparse.Namespace:
 		default=DEFAULT_THRESHOLD,
 		help="Character threshold for changelog summarization (default: 6000).",
 	)
+	parser.add_argument(
+		'-c', '--chunk-size', dest='chunk_size',
+		type=int,
+		default=2250,
+		help="Characters per chunk for splitting long entries (default: 2250).",
+	)
+	parser.add_argument(
+		'--chunk-overlap', dest='chunk_overlap',
+		type=int,
+		default=250,
+		help="Overlap between consecutive chunks (default: 250).",
+	)
+	parser.add_argument(
+		'-d', '--depth', dest='depth',
+		type=int,
+		default=None,
+		help="LLM generation depth 1-4 (higher = more candidates, better quality).",
+	)
+	# continue / no-continue flag pair
+	parser.add_argument(
+		'--continue', dest='continue_mode',
+		action='store_true',
+		help="Reuse cached LLM drafts when available (default).",
+	)
+	parser.add_argument(
+		'--no-continue', dest='continue_mode',
+		action='store_false',
+		help="Regenerate all LLM outputs from scratch.",
+	)
+	parser.set_defaults(continue_mode=True)
+	parser.add_argument(
+		'--llm-max-tokens', dest='llm_max_tokens',
+		type=int,
+		default=None,
+		help="Max generation tokens per LLM call (defaults from settings.yaml).",
+	)
 	args = parser.parse_args()
 	return args
 
@@ -95,25 +138,125 @@ def resolve_latest_fetch_input(input_path: str) -> str:
 
 
 #============================================
+def _sanitize_repo_slug(repo_full_name: str) -> str:
+	"""
+	Convert a repo full name like 'user/repo' to a safe filename slug.
+	"""
+	# replace slashes and other non-alphanumeric chars with underscores
+	slug = re.sub(r"[^a-zA-Z0-9]", "_", repo_full_name)
+	slug = slug.strip("_").lower()
+	return slug
+
+
+#============================================
+def _changelog_summary_quality_issue(text: str) -> str:
+	"""
+	Return a validation issue string when changelog summary is unusable.
+
+	Returns empty string if OK; returns issue description if
+	empty or error payload.
+	"""
+	clean = (text or "").strip()
+	if not clean:
+		return "empty output"
+	lower = clean.lower()
+	if ("error_code" in lower) or ("generationerror" in lower):
+		return "llm returned error payload"
+	if clean.startswith("{") and clean.endswith("}"):
+		return "llm returned structured error/object text"
+	return ""
+
+
+#============================================
+def _referee_changelog(
+	client,
+	draft_a: str,
+	draft_b: str,
+	max_tokens: int,
+) -> str:
+	"""
+	Run referee comparison between two changelog summary drafts.
+	"""
+	# randomize label assignment to avoid position bias
+	labels = [("A", "B"), ("B", "A")]
+	label_a, label_b = random.choice(labels)
+	if label_a == "B":
+		draft_a, draft_b = draft_b, draft_a
+	template = prompt_loader.load_prompt("depth_referee_changelog.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"label_a": label_a,
+		"label_b": label_b,
+		"draft_a": draft_a,
+		"draft_b": draft_b,
+	})
+	raw = client.generate(
+		prompt=prompt,
+		purpose="changelog referee",
+		max_tokens=max_tokens,
+	).strip()
+	return raw
+
+
+#============================================
+def _polish_changelog(
+	client,
+	drafts: list,
+	depth: int,
+	max_tokens: int,
+) -> str:
+	"""
+	Run polish pass to merge multiple changelog summary drafts into one.
+	"""
+	parts = []
+	for i, draft in enumerate(drafts, start=1):
+		parts.append(f"Draft {i}:\n{draft}")
+	drafts_block = "\n\n".join(parts)
+	template = prompt_loader.load_prompt("depth_polish_changelog.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"draft_count": str(len(drafts)),
+		"drafts_block": drafts_block,
+	})
+	polished = client.generate(
+		prompt=prompt,
+		purpose="changelog polish",
+		max_tokens=max_tokens,
+	).strip()
+	return polished
+
+
+#============================================
 def summarize_jsonl_changelogs(
 	input_path: str,
 	client,
 	threshold: int,
 	log_fn=None,
+	chunk_size: int = 2250,
+	chunk_overlap: int = 250,
+	depth: int = 1,
+	cache_dir: str = "",
+	continue_mode: bool = True,
+	max_tokens: int = 1024,
 ) -> int:
 	"""
 	Read JSONL, summarize long repo_changelog entries, write back atomically.
 
 	For each repo_changelog record where latest_entry exceeds threshold,
 	the entry is summarized via changelog_summarizer.summarize_long_changelog().
-	All other records pass through unchanged. The file is rewritten atomically
-	via a temp file and rename.
+	At depth 2+, multiple drafts are generated and refined via the depth
+	pipeline. All other records pass through unchanged. The file is rewritten
+	atomically via a temp file and rename.
 
 	Args:
 		input_path: path to the JSONL file.
 		client: local-llm-wrapper LLMClient instance.
 		threshold: character count above which summarization triggers.
 		log_fn: optional callable for progress logging.
+		chunk_size: characters per chunk for splitting long entries.
+		chunk_overlap: overlap between consecutive chunks.
+		depth: LLM generation depth (1-4).
+		cache_dir: directory for depth pipeline cache files.
+		continue_mode: whether to load cached drafts in depth mode.
+		max_tokens: max generation tokens per LLM call.
 
 	Returns:
 		Count of entries that were summarized.
@@ -140,8 +283,10 @@ def summarize_jsonl_changelogs(
 						f"Summarizing changelog for {repo_name} "
 						f"({len(entry_text)} chars)"
 					)
-				summary = changelog_summarizer.summarize_long_changelog(
-					client, entry_text, threshold=threshold, log_fn=log_fn,
+				summary = _summarize_one_entry(
+					client, entry_text, threshold, chunk_size,
+					chunk_overlap, max_tokens, log_fn,
+					depth, cache_dir, continue_mode, repo_name,
 				)
 				record["latest_entry"] = summary
 				summarized_count += 1
@@ -156,6 +301,63 @@ def summarize_jsonl_changelogs(
 		handle.writelines(output_lines)
 	os.replace(tmp_path, input_path)
 	return summarized_count
+
+
+#============================================
+def _summarize_one_entry(
+	client,
+	entry_text: str,
+	threshold: int,
+	chunk_size: int,
+	chunk_overlap: int,
+	max_tokens: int,
+	log_fn,
+	depth: int,
+	cache_dir: str,
+	continue_mode: bool,
+	repo_name: str,
+) -> str:
+	"""
+	Summarize a single long changelog entry, using depth pipeline if depth >= 2.
+	"""
+	if depth <= 1:
+		# single-pass: call summarize_long_changelog once
+		summary = changelog_summarizer.summarize_long_changelog(
+			client, entry_text, threshold=threshold,
+			chunk_size=chunk_size, overlap=chunk_overlap,
+			max_tokens=max_tokens, log_fn=log_fn,
+		)
+		return summary
+
+	# depth 2+: use depth pipeline for multi-draft generation
+	repo_slug = _sanitize_repo_slug(repo_name)
+
+	def _gen_draft() -> str:
+		return changelog_summarizer.summarize_long_changelog(
+			client, entry_text, threshold=threshold,
+			chunk_size=chunk_size, overlap=chunk_overlap,
+			max_tokens=max_tokens, log_fn=log_fn,
+		)
+
+	def _referee(draft_a: str, draft_b: str) -> str:
+		return _referee_changelog(client, draft_a, draft_b, max_tokens)
+
+	def _polish(drafts: list, d: int) -> str:
+		return _polish_changelog(client, drafts, d, max_tokens)
+
+	result = depth_orchestrator.run_depth_pipeline(
+		generate_draft_fn=_gen_draft,
+		referee_fn=_referee,
+		polish_fn=_polish,
+		depth=depth,
+		cache_dir=cache_dir,
+		cache_key_prefix=f"changelog_{repo_slug}",
+		continue_mode=continue_mode,
+		max_tokens=max_tokens,
+		quality_check_fn=_changelog_summary_quality_issue,
+		logger=log_fn,
+	)
+	return result
 
 
 #============================================
@@ -193,6 +395,24 @@ def main() -> None:
 	if args.llm_model is not None:
 		model_override = args.llm_model.strip()
 
+	# resolve depth from settings + CLI override
+	default_depth = pipeline_settings.get_llm_depth(settings, 1)
+	depth = default_depth if args.depth is None else args.depth
+	depth_orchestrator.validate_depth(depth)
+
+	# resolve max_tokens from settings + CLI override
+	default_max_tokens = pipeline_settings.get_setting_int(
+		settings, ["llm", "max_tokens"], 1200,
+	)
+	max_tokens = default_max_tokens if args.llm_max_tokens is None else args.llm_max_tokens
+
+	# build cache directory for depth pipeline
+	cache_dir = os.path.join(
+		os.path.dirname(os.path.abspath(input_path)), "depth_cache",
+	)
+
+	log_step(f"Depth: {depth}, continue_mode: {args.continue_mode}")
+
 	# create LLM client lazily only if needed
 	client = outline_llm.create_llm_client(
 		script_file=__file__,
@@ -202,6 +422,9 @@ def main() -> None:
 	)
 	count = summarize_jsonl_changelogs(
 		input_path, client, args.threshold, log_fn=log_step,
+		chunk_size=args.chunk_size, chunk_overlap=args.chunk_overlap,
+		depth=depth, cache_dir=cache_dir,
+		continue_mode=args.continue_mode, max_tokens=max_tokens,
 	)
 	log_step(f"Summarized {count} changelog entry(ies).")
 	log_step("Changelog summarization stage complete.")

@@ -1,7 +1,6 @@
 import json
 import os
 import sys
-import tempfile
 
 import git_file_utils
 
@@ -64,8 +63,10 @@ def test_summarize_jsonl_changelogs_replaces_long_entries(tmp_path) -> None:
 		},
 	]
 	path = _make_jsonl(records, str(tmp_path))
+	cache_dir = os.path.join(str(tmp_path), "depth_cache")
 	count = summarize_changelog_data.summarize_jsonl_changelogs(
 		path, FakeClient(), threshold=6000,
+		depth=1, cache_dir=cache_dir, continue_mode=True, max_tokens=1024,
 	)
 	assert count == 1
 	result = _read_jsonl(path)
@@ -92,8 +93,10 @@ def test_summarize_jsonl_changelogs_passthrough_short(tmp_path) -> None:
 		},
 	]
 	path = _make_jsonl(records, str(tmp_path))
+	cache_dir = os.path.join(str(tmp_path), "depth_cache")
 	count = summarize_changelog_data.summarize_jsonl_changelogs(
 		path, FakeClient(), threshold=6000,
+		depth=1, cache_dir=cache_dir, continue_mode=True, max_tokens=1024,
 	)
 	assert count == 0
 	result = _read_jsonl(path)
@@ -121,8 +124,10 @@ def test_summarize_jsonl_changelogs_non_changelog_records_unchanged(tmp_path) ->
 		},
 	]
 	path = _make_jsonl(records, str(tmp_path))
+	cache_dir = os.path.join(str(tmp_path), "depth_cache")
 	count = summarize_changelog_data.summarize_jsonl_changelogs(
 		path, FakeClient(), threshold=6000,
+		depth=1, cache_dir=cache_dir, continue_mode=True, max_tokens=1024,
 	)
 	assert count == 0
 	result = _read_jsonl(path)
@@ -131,3 +136,72 @@ def test_summarize_jsonl_changelogs_non_changelog_records_unchanged(tmp_path) ->
 	assert result[0]["record_type"] == "run_metadata"
 	assert result[1]["message"] == "fix: resolve edge case in parser"
 	assert result[2]["title"] == "Bug in parser"
+
+
+#============================================
+def test_summarize_jsonl_changelogs_depth2_uses_pipeline(tmp_path) -> None:
+	"""
+	At depth 2, the pipeline should generate multiple drafts and polish.
+	"""
+	draft_count = [0]
+
+	class DepthFakeClient:
+		"""Fake LLM client that tracks draft generation and polish calls."""
+		def generate(self, prompt=None, purpose=None, max_tokens=0):
+			# track draft generation calls (chunk summaries)
+			if "chunk" in (purpose or ""):
+				draft_count[0] += 1
+				return f"Chunk summary {draft_count[0]}."
+			# polish call returns a polished result
+			if "polish" in (purpose or ""):
+				return "Polished changelog summary."
+			# default fallback
+			return "Draft summary text."
+
+	records = [
+		{
+			"record_type": "repo_changelog",
+			"repo_full_name": "user/depthrepo",
+			"latest_heading": "## 2026-02-22",
+			"latest_entry": "z" * 7000,
+			"event_time": "2026-02-22T00:00:00Z",
+		},
+	]
+	path = _make_jsonl(records, str(tmp_path))
+	cache_dir = os.path.join(str(tmp_path), "depth_cache")
+	count = summarize_changelog_data.summarize_jsonl_changelogs(
+		path, DepthFakeClient(), threshold=6000,
+		depth=2, cache_dir=cache_dir, continue_mode=False, max_tokens=1024,
+	)
+	assert count == 1
+	# at depth 2, should have generated multiple drafts (each with chunk calls)
+	# each draft requires multiple chunk summary calls for 7000 chars
+	assert draft_count[0] >= 4
+	result = _read_jsonl(path)
+	changelog_rec = [r for r in result if r.get("record_type") == "repo_changelog"][0]
+	# the polished result should be in the output
+	assert "summary" in changelog_rec["latest_entry"].lower()
+
+
+#============================================
+def test_changelog_summary_quality_issue() -> None:
+	"""
+	Quality check should return empty for good text, non-empty for bad.
+	"""
+	# good text returns empty string
+	assert summarize_changelog_data._changelog_summary_quality_issue("Good summary.") == ""
+	# empty text returns issue
+	assert summarize_changelog_data._changelog_summary_quality_issue("") != ""
+	assert summarize_changelog_data._changelog_summary_quality_issue(None) != ""
+	# error payload returns issue
+	assert summarize_changelog_data._changelog_summary_quality_issue(
+		'{"error_code": "500"}'
+	) != ""
+	# structured error object returns issue
+	assert summarize_changelog_data._changelog_summary_quality_issue(
+		'{"some": "json"}'
+	) != ""
+	# generationerror returns issue
+	assert summarize_changelog_data._changelog_summary_quality_issue(
+		"GenerationError: model failed"
+	) != ""

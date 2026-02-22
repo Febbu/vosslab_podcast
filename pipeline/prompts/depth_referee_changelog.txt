@@ -1,0 +1,18 @@
+You are a referee comparing two changelog summary drafts.
+
+Candidate {{label_a}}:
+{{draft_a}}
+
+Candidate {{label_b}}:
+{{draft_b}}
+
+Compare the two candidates on these measurable criteria:
+- Which summary retains more concrete details (file names, function names, PR numbers, commit subjects)?
+- Which summary has less filler and fewer vague statements?
+- Which summary is more concise while still covering all key changes?
+
+Output your decision in exactly this format:
+<winner>{{label_a}} or {{label_b}}</winner><reason>one sentence explaining why</reason>
+
+Do not add any other text. Your entire response must be the winner and reason tags.
+Example: <winner>A</winner><reason>Draft A preserves more file names and commit details while staying concise.</reason>

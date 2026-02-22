@@ -1,6 +1,39 @@
 ## 2026-02-22
 
 ### Additions and New Features
+- Added depth pipeline support to `pipeline/summarize_changelog_data.py` via `--depth` flag.
+  At depth 2+, multiple changelog summary drafts are generated and refined through
+  `depth_orchestrator.run_depth_pipeline()` with referee (depth 4) and polish (depth 2-4) passes.
+- Added `--no-continue` flag to `pipeline/summarize_changelog_data.py` for forcing regeneration
+  of cached summaries when re-running the pipeline.
+- Added `--chunk-size` / `-c` and `--chunk-overlap` CLI flags to
+  `pipeline/summarize_changelog_data.py` for configuring chunk splitting parameters.
+- Added `--llm-max-tokens` CLI flag to `pipeline/summarize_changelog_data.py`.
+- Created `pipeline/prompts/depth_referee_changelog.txt` for comparing two changelog summary
+  drafts on concrete detail retention, filler avoidance, and conciseness.
+- Created `pipeline/prompts/depth_polish_changelog.txt` for merging multiple changelog summary
+  drafts into one final concise summary.
+- Added `_changelog_summary_quality_issue()`, `_referee_changelog()`, `_polish_changelog()`,
+  and `_summarize_one_entry()` helper functions to `pipeline/summarize_changelog_data.py`.
+
+### Behavior or Interface Changes
+- Changed default chunk_size from 3000 to 2250 and overlap from 500 to 250 in
+  `pipeline/changelog_summarizer.py` `chunk_text()` and `summarize_long_changelog()`.
+- Wired `--no-continue` and `--depth` flags through to the `changelog_summarize` stage in
+  `automation/run_local_pipeline.py`, matching the pattern used by outline and blog stages.
+- Updated `tests/test_changelog_summarizer.py` to use 2250/250 chunk defaults in all tests.
+- Updated `tests/test_summarize_changelog_data.py` to pass depth, cache_dir, continue_mode,
+  and max_tokens to `summarize_jsonl_changelogs()`.
+- Added `test_summarize_jsonl_changelogs_depth2_uses_pipeline` and
+  `test_changelog_summary_quality_issue` tests to `tests/test_summarize_changelog_data.py`.
+- Moved `pipeline/prompt_loader.py` to `pipeline/podlib/prompt_loader.py` since it is a library
+  module, not an executable script. Updated all imports across 6 pipeline scripts and 2 test files
+  to use `from podlib import prompt_loader`.
+- Moved `pipeline/changelog_summarizer.py` to `pipeline/podlib/changelog_summarizer.py` for the
+  same reason. Updated imports in `pipeline/summarize_changelog_data.py` and
+  `tests/test_changelog_summarizer.py`.
+
+
 - Added `pipeline/summarize_changelog_data.py` as a new pipeline stage between fetch and outline.
   Reads the fetch JSONL, summarizes `repo_changelog` entries exceeding 6000 chars via
   `changelog_summarizer.summarize_long_changelog()`, and writes the updated JSONL back atomically.

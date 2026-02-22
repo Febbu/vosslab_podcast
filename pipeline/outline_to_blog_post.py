@@ -12,7 +12,7 @@ from podlib import outline_llm
 from podlib import pipeline_settings
 from podlib import pipeline_text_utils
 
-import prompt_loader
+from podlib import prompt_loader
 
 
 WORD_RE = re.compile(r"[A-Za-z0-9']+")

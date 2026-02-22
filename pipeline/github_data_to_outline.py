@@ -14,7 +14,7 @@ from podlib import depth_orchestrator
 from podlib import pipeline_settings
 from podlib import outline_llm
 
-import prompt_loader
+from podlib import prompt_loader
 
 
 REPO_SLUG_RE = re.compile(r"[^a-z0-9._-]+")

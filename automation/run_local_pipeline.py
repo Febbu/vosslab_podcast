@@ -197,7 +197,7 @@ def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]
 				"pipeline/summarize_changelog_data.py",
 				"--settings",
 				args.settings,
-			],
+			] + (["--no-continue"] if args.no_continue else []) + depth_flags,
 		),
 		(
 			"outline",

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Changelog chunk summarizer for long changelog entries.
 
 Breaks long changelog text into overlapping chunks, summarizes each chunk
@@ -6,11 +5,11 @@ via an LLM, and concatenates the summaries into a shorter but complete
 representation of the full changelog content.
 """
 
-import prompt_loader
+from podlib import prompt_loader
 
 
 #============================================
-def chunk_text(text: str, chunk_size: int = 3000, overlap: int = 500) -> list[str]:
+def chunk_text(text: str, chunk_size: int = 2250, overlap: int = 250) -> list[str]:
 	"""
 	Split text into overlapping chunks.
 
@@ -83,8 +82,8 @@ def summarize_long_changelog(
 	client,
 	entry_text: str,
 	threshold: int = 6000,
-	chunk_size: int = 3000,
-	overlap: int = 500,
+	chunk_size: int = 2250,
+	overlap: int = 250,
 	max_tokens: int = 1024,
 	log_fn=None,
 ) -> str:
