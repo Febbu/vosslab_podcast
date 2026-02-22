@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 import argparse
-import base64
 import json
 import os
-import random
 import re
-import time
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
-import requests
-
+import github_client
 import pipeline_settings
 
 
-PER_PAGE = 100
 DATE_HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b")
+
+
+#============================================
+def log_step(message: str) -> None:
+	"""
+	Print one timestamped progress line.
+	"""
+	now_text = datetime.now().strftime("%H:%M:%S")
+	print(f"[fetch_github_data {now_text}] {message}", flush=True)
 
 
 #============================================
@@ -37,42 +41,17 @@ def parse_args() -> argparse.Namespace:
 		default="settings.yaml",
 		help="YAML settings path for defaults.",
 	)
-	window_group = parser.add_mutually_exclusive_group()
-	window_group.add_argument(
-		"--last-day",
-		action="store_true",
-		help="Use a 1-day window (default when no window flag is provided).",
-	)
-	window_group.add_argument(
-		"--last-two-days",
-		action="store_true",
-		help="Use a 2-day window.",
-	)
-	window_group.add_argument(
-		"--last-week",
-		action="store_true",
-		help="Use a 7-day window.",
-	)
-	window_group.add_argument(
-		"--last-month",
-		action="store_true",
-		help="Use a 30-day window.",
-	)
-	window_group.add_argument(
-		"--window-days",
+	parser.add_argument(
+		"--last-days",
+		dest="last_n_days",
 		type=int,
-		default=None,
-		help="Use a custom day window size.",
+		default=1,
+		help="Fetch activity from the last N days (default: 1).",
 	)
 	parser.add_argument(
 		"--output",
 		default="out/github_data.jsonl",
 		help="Path to JSONL output file.",
-	)
-	parser.add_argument(
-		"--token",
-		default="",
-		help="Optional GitHub token. Falls back to GH_TOKEN or GITHUB_TOKEN.",
 	)
 	parser.add_argument(
 		"--include-forks",
@@ -84,11 +63,6 @@ def parse_args() -> argparse.Namespace:
 		type=int,
 		default=0,
 		help="Optional cap for repos processed (0 means no cap).",
-	)
-	parser.add_argument(
-		"--api-base",
-		default="https://api.github.com",
-		help="GitHub API base URL.",
 	)
 	parser.add_argument(
 		"--skip-changelog",
@@ -107,20 +81,11 @@ def parse_args() -> argparse.Namespace:
 #============================================
 def resolve_window_days(args: argparse.Namespace) -> int:
 	"""
-	Resolve selected window-day setting from exclusive options.
+	Resolve selected trailing day window.
 	"""
-	if args.last_two_days:
-		return 2
-	if args.last_week:
-		return 7
-	if args.last_month:
-		return 30
-	if args.window_days is not None:
-		if args.window_days < 1:
-			raise RuntimeError("--window-days must be >= 1")
-		return args.window_days
-	# --last-day is treated as explicit, and default also falls back to one day.
-	return 1
+	if args.last_n_days < 1:
+		raise RuntimeError("--last-days must be >= 1")
+	return args.last_n_days
 
 
 #============================================
@@ -155,64 +120,96 @@ def in_window(ts: str, window_start: datetime, window_end: datetime) -> bool:
 
 
 #============================================
-def build_headers(token: str) -> dict[str, str]:
+def to_utc_iso(value) -> str:
 	"""
-	Build GitHub request headers.
+	Convert datetime-like values to ISO-8601 UTC strings.
 	"""
-	headers = {
-		"Accept": "application/vnd.github+json",
-	}
-	if token:
-		headers["Authorization"] = f"Bearer {token}"
-	return headers
+	if value is None:
+		return ""
+	if isinstance(value, str):
+		return value
+	if isinstance(value, datetime):
+		if value.tzinfo is None:
+			value = value.replace(tzinfo=timezone.utc)
+		return value.astimezone(timezone.utc).isoformat()
+	return str(value)
 
 
 #============================================
-def github_get_json(
-	url: str,
-	params: dict[str, str | int],
-	headers: dict[str, str],
-) -> list[dict] | dict:
+def repo_to_dict(repo_obj) -> dict:
 	"""
-	Send one API request with light randomized spacing.
+	Normalize a PyGithub repository object to REST-like dict shape.
 	"""
-	time.sleep(random.random())
-	response = requests.get(
-		url,
-		headers=headers,
-		params=params,
-		timeout=45,
-	)
-	response.raise_for_status()
-	payload = response.json()
-	return payload
+	data = getattr(repo_obj, "raw_data", {}) or {}
+	repo = dict(data)
+	if "full_name" not in repo:
+		repo["full_name"] = getattr(repo_obj, "full_name", "")
+	if "name" not in repo:
+		repo["name"] = getattr(repo_obj, "name", "")
+	if "fork" not in repo:
+		repo["fork"] = bool(getattr(repo_obj, "fork", False))
+	if "created_at" not in repo:
+		repo["created_at"] = to_utc_iso(getattr(repo_obj, "created_at", None))
+	if "updated_at" not in repo:
+		repo["updated_at"] = to_utc_iso(getattr(repo_obj, "updated_at", None))
+	if "pushed_at" not in repo:
+		repo["pushed_at"] = to_utc_iso(getattr(repo_obj, "pushed_at", None))
+	if "default_branch" not in repo:
+		repo["default_branch"] = getattr(repo_obj, "default_branch", "")
+	return repo
 
 
 #============================================
-def fetch_paginated(
-	url: str,
-	base_params: dict[str, str | int],
-	headers: dict[str, str],
-) -> list[dict]:
+def commit_to_dict(commit_obj) -> dict:
 	"""
-	Fetch all paginated list results from one endpoint.
+	Normalize a PyGithub commit object to REST-like dict shape.
 	"""
-	page = 1
-	results: list[dict] = []
-	while True:
-		params = dict(base_params)
-		params["per_page"] = PER_PAGE
-		params["page"] = page
-		payload = github_get_json(url, params, headers)
-		if not isinstance(payload, list):
-			raise RuntimeError(f"Expected list payload from {url}")
-		if not payload:
-			break
-		results.extend(payload)
-		if len(payload) < PER_PAGE:
-			break
-		page += 1
-	return results
+	data = getattr(commit_obj, "raw_data", {}) or {}
+	commit = dict(data)
+	if "sha" not in commit:
+		commit["sha"] = getattr(commit_obj, "sha", "")
+	commit_payload = commit.get("commit") or {}
+	if "commit" not in commit:
+		commit_payload = {}
+		commit["commit"] = commit_payload
+	author_payload = commit_payload.get("author") or {}
+	if "author" not in commit_payload:
+		author_payload = {}
+		commit_payload["author"] = author_payload
+	committer_payload = commit_payload.get("committer") or {}
+	if "committer" not in commit_payload:
+		committer_payload = {}
+		commit_payload["committer"] = committer_payload
+	if not author_payload.get("date"):
+		author_payload["date"] = to_utc_iso(getattr(commit_obj.commit.author, "date", None))
+	if not committer_payload.get("date"):
+		committer_payload["date"] = to_utc_iso(getattr(commit_obj.commit.committer, "date", None))
+	if not commit_payload.get("message"):
+		commit_payload["message"] = getattr(commit_obj.commit, "message", "")
+	return commit
+
+
+#============================================
+def issue_to_dict(issue_obj) -> dict:
+	"""
+	Normalize a PyGithub issue object to REST-like dict shape.
+	"""
+	data = getattr(issue_obj, "raw_data", {}) or {}
+	issue = dict(data)
+	if "number" not in issue:
+		issue["number"] = getattr(issue_obj, "number", 0)
+	if "title" not in issue:
+		issue["title"] = getattr(issue_obj, "title", "")
+	if "state" not in issue:
+		issue["state"] = getattr(issue_obj, "state", "")
+	if "updated_at" not in issue:
+		issue["updated_at"] = to_utc_iso(getattr(issue_obj, "updated_at", None))
+	if "created_at" not in issue:
+		issue["created_at"] = to_utc_iso(getattr(issue_obj, "created_at", None))
+	pr_attr = getattr(issue_obj, "pull_request", None)
+	if ("pull_request" not in issue) and (pr_attr is not None):
+		issue["pull_request"] = {}
+	return issue
 
 
 #============================================
@@ -255,50 +252,21 @@ def parse_latest_changelog_entry(changelog_text: str) -> tuple[str, str, str]:
 
 #============================================
 def fetch_repo_changelog_content(
-	api_base: str,
-	repo_full_name: str,
+	client: github_client.GitHubClient,
+	repo_obj,
 	ref_name: str,
-	headers: dict[str, str],
 ) -> dict:
 	"""
 	Fetch docs/CHANGELOG.md metadata and text from one repository.
 	"""
-	url = f"{api_base}/repos/{repo_full_name}/contents/docs/CHANGELOG.md"
-	params = {}
-	if ref_name:
-		params["ref"] = ref_name
-	time.sleep(random.random())
-	response = requests.get(
-		url,
-		headers=headers,
-		params=params,
-		timeout=45,
-	)
-	if response.status_code == 404:
+	payload = client.get_file_content(repo_obj, "docs/CHANGELOG.md", ref_name)
+	if payload is None:
 		return {}
-	if response.status_code == 403:
-		return {}
-	response.raise_for_status()
-	payload = response.json()
-	if not isinstance(payload, dict):
-		return {}
-	if payload.get("type") != "file":
-		return {}
-	content_encoded = payload.get("content") or ""
-	encoding = payload.get("encoding") or ""
-	if encoding != "base64":
-		return {}
-	content_clean = content_encoded.replace("\n", "")
-	try:
-		content_bytes = base64.b64decode(content_clean, validate=False)
-	except Exception:
-		return {}
-	changelog_text = content_bytes.decode("utf-8", errors="replace")
 	result = {
 		"path": payload.get("path") or "docs/CHANGELOG.md",
 		"sha": payload.get("sha") or "",
 		"size": payload.get("size") or 0,
-		"changelog_text": changelog_text,
+		"changelog_text": payload.get("text") or "",
 	}
 	return result
 
@@ -524,35 +492,56 @@ def main() -> None:
 	settings, settings_path = pipeline_settings.load_settings(args.settings)
 	default_user = pipeline_settings.get_setting_str(settings, ["github", "username"], "")
 	user = args.user.strip() or default_user or "vosslab"
-	print(f"Using settings file: {settings_path}")
-	print(f"Using GitHub user: {user}")
+	log_step(f"Using settings file: {settings_path}")
+	log_step(f"Using GitHub user: {user}")
 	window_days = resolve_window_days(args)
 	window_end = utc_now()
 	window_start = window_end - timedelta(days=window_days)
 	fallback_day = window_end.date().isoformat()
+	log_step(
+		f"Active window: {window_start.isoformat()} -> {window_end.isoformat()} "
+		+ f"({window_days} day(s))"
+	)
 
-	token = args.token.strip()
-	if not token:
-		token = os.environ.get("GH_TOKEN", "").strip()
-	if not token:
-		token = os.environ.get("GITHUB_TOKEN", "").strip()
+	token = pipeline_settings.get_setting_str(settings, ["github", "token"], "")
+	if token:
+		log_step("Using authenticated GitHub API mode via settings.yaml github.token.")
+	else:
+		log_step("Using unauthenticated GitHub API mode (lower rate limit).")
 
-	api_base = args.api_base.rstrip("/")
-	headers = build_headers(token)
-
-	repos_url = f"{api_base}/users/{user}/repos"
-	repo_params = {
-		"type": "owner",
-		"sort": "updated",
-		"direction": "desc",
-	}
-	repos = fetch_paginated(repos_url, repo_params, headers)
+	try:
+		client = github_client.GitHubClient(token, log_fn=log_step)
+	except RuntimeError as error:
+		log_step(str(error))
+		log_step("Aborting fetch run before network calls.")
+		return
+	stopped_due_to_rate_limit = False
+	stopped_reason = ""
+	log_step("Fetching repository list.")
+	repos = []
+	try:
+		repo_iter = client.list_repos(user)
+		if args.max_repos > 0:
+			for repo_obj in repo_iter:
+				repos.append(repo_obj)
+				if len(repos) >= args.max_repos:
+					break
+		else:
+			repos = list(repo_iter)
+	except github_client.RateLimitError as error:
+		stopped_due_to_rate_limit = True
+		stopped_reason = str(error)
+		log_step(stopped_reason)
+		log_step("Repository listing stopped by rate limit; writing summary-only output.")
 	if args.max_repos > 0:
-		repos = repos[:args.max_repos]
+		log_step(f"Applied --max-repos cap: {len(repos)} repo(s).")
+	else:
+		log_step(f"Repository candidates: {len(repos)}.")
 
 	output_path = os.path.abspath(args.output)
 	output_dir = os.path.dirname(output_path)
 	os.makedirs(output_dir, exist_ok=True)
+	log_step(f"Writing JSONL output to: {output_path}")
 
 	record_counts = {
 		"repo": 0,
@@ -577,13 +566,16 @@ def main() -> None:
 		}
 		write_jsonl_line(handle, start_record)
 
-		for repo in repos:
+		for repo_obj in repos:
+			repo = repo_to_dict(repo_obj)
 			if repo.get("fork") and not args.include_forks:
+				log_step(f"Skipping fork repo: {repo.get('full_name') or '(unknown)'}")
 				continue
 			repo_full_name = repo.get("full_name") or ""
 			repo_name = repo.get("name") or ""
 			if not repo_full_name:
 				continue
+			log_step(f"Processing repo: {repo_full_name}")
 
 			repo_record = build_repo_record(
 				user,
@@ -594,20 +586,39 @@ def main() -> None:
 			write_jsonl_line(handle, repo_record)
 			add_record_to_daily_bucket(daily_buckets, repo_record, fallback_day)
 			record_counts["repo"] += 1
+
+			updated_marker = (
+				repo.get("updated_at")
+				or repo.get("pushed_at")
+				or repo.get("created_at")
+				or ""
+			)
 			repo_recent = in_window(
-				repo.get("pushed_at") or repo.get("created_at") or "",
+				updated_marker,
 				window_start,
 				window_end,
 			)
+			if not repo_recent:
+				log_step(
+					f"Skipping detail fetch for stale repo: {repo_full_name} "
+					+ f"(updated marker: {updated_marker or 'none'})"
+				)
+				continue
 			repo_activity_count = 0
+			repo_commit_count = 0
+			repo_issue_count = 0
+			repo_pull_request_count = 0
 
-			commit_url = f"{api_base}/repos/{repo_full_name}/commits"
-			commit_params = {
-				"since": window_start.isoformat(),
-				"until": window_end.isoformat(),
-			}
-			commits = fetch_paginated(commit_url, commit_params, headers)
-			for commit in commits:
+			try:
+				commits = client.list_commits(repo_obj, window_start, window_end)
+			except github_client.RateLimitError as error:
+				stopped_due_to_rate_limit = True
+				stopped_reason = str(error)
+				log_step(stopped_reason)
+				log_step("Stopping further repo detail fetches and writing partial output.")
+				break
+			for commit_obj in commits:
+				commit = commit_to_dict(commit_obj)
 				commit_record = build_commit_record(
 					user,
 					window_start,
@@ -620,16 +631,19 @@ def main() -> None:
 				add_record_to_daily_bucket(daily_buckets, commit_record, fallback_day)
 				record_counts["commit"] += 1
 				repo_activity_count += 1
+				repo_commit_count += 1
+			log_step(f"Repo {repo_full_name}: collected {repo_commit_count} commit record(s).")
 
-			issues_url = f"{api_base}/repos/{repo_full_name}/issues"
-			issue_params = {
-				"state": "all",
-				"since": window_start.isoformat(),
-				"sort": "updated",
-				"direction": "desc",
-			}
-			issues = fetch_paginated(issues_url, issue_params, headers)
-			for issue in issues:
+			try:
+				issues = client.list_issues(repo_obj, window_start)
+			except github_client.RateLimitError as error:
+				stopped_due_to_rate_limit = True
+				stopped_reason = str(error)
+				log_step(stopped_reason)
+				log_step("Stopping further repo detail fetches and writing partial output.")
+				break
+			for issue_obj in issues:
+				issue = issue_to_dict(issue_obj)
 				event_time = issue.get("updated_at") or issue.get("created_at") or ""
 				event_dt = parse_iso(event_time)
 				if event_dt < window_start:
@@ -647,15 +661,29 @@ def main() -> None:
 				record_type = issue_record["record_type"]
 				record_counts[record_type] += 1
 				repo_activity_count += 1
+				if record_type == "pull_request":
+					repo_pull_request_count += 1
+				else:
+					repo_issue_count += 1
+			log_step(
+				f"Repo {repo_full_name}: collected {repo_issue_count} issue record(s) and "
+				+ f"{repo_pull_request_count} pull request record(s)."
+			)
 
 			if (not args.skip_changelog) and (repo_recent or repo_activity_count > 0):
 				ref_name = repo.get("default_branch") or ""
-				changelog_info = fetch_repo_changelog_content(
-					api_base,
-					repo_full_name,
-					ref_name,
-					headers,
-				)
+				try:
+					changelog_info = fetch_repo_changelog_content(
+						client,
+						repo_obj,
+						ref_name,
+					)
+				except github_client.RateLimitError as error:
+					stopped_due_to_rate_limit = True
+					stopped_reason = str(error)
+					log_step(stopped_reason)
+					log_step("Stopping further repo detail fetches and writing partial output.")
+					break
 				if changelog_info:
 					changelog_record = build_changelog_record(
 						user,
@@ -678,6 +706,8 @@ def main() -> None:
 			"fetched_at": utc_now().isoformat(),
 			"record_counts": record_counts,
 			"daily_cache_dir": os.path.abspath(args.daily_cache_dir),
+			"stopped_due_to_rate_limit": stopped_due_to_rate_limit,
+			"stop_reason": stopped_reason,
 		}
 		write_jsonl_line(handle, end_record)
 
@@ -697,8 +727,13 @@ def main() -> None:
 		+ record_counts["repo_changelog"]
 		+ 2
 	)
-	print(f"Wrote {output_path} ({total_records} records)")
-	print(f"Wrote {len(written_daily_files)} daily cache file(s) in {os.path.abspath(args.daily_cache_dir)}")
+	log_step(f"Wrote {output_path} ({total_records} records)")
+	log_step(
+		"Daily cache files written: "
+		+ f"{len(written_daily_files)} in {os.path.abspath(args.daily_cache_dir)}"
+	)
+	if stopped_due_to_rate_limit:
+		log_step("Run finished with partial data due to GitHub API rate limiting.")
 
 
 if __name__ == "__main__":

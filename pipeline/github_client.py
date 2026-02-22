@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+import time
+from datetime import datetime
+from datetime import timezone
+
+
+#============================================
+class RateLimitError(RuntimeError):
+	"""
+	Raised when GitHub API rate limits block further requests.
+	"""
+
+
+#============================================
+class GitHubClient:
+	"""
+	Thin PyGithub wrapper for fetch pipeline use-cases.
+	"""
+
+	def __init__(self, token: str, log_fn=None):
+		self.log_fn = log_fn
+		self._rate_check_count = 0
+		self._low_remaining_threshold = 5
+		try:
+			from github import Github
+			from github.GithubException import GithubException
+		except ModuleNotFoundError as error:
+			raise RuntimeError(
+				"Missing dependency: PyGithub. Install it with pip install PyGithub."
+			) from error
+		self._github_exception_class = GithubException
+		if token:
+			self.client = Github(token)
+		else:
+			self.client = Github()
+
+	#============================================
+	def log(self, message: str) -> None:
+		"""
+		Emit one log line when logger is configured.
+		"""
+		if self.log_fn is not None:
+			self.log_fn(message)
+
+	#============================================
+	def normalize_datetime(self, value: datetime) -> datetime:
+		"""
+		Normalize datetime to timezone-aware UTC.
+		"""
+		if value.tzinfo is None:
+			return value.replace(tzinfo=timezone.utc)
+		return value.astimezone(timezone.utc)
+
+	#============================================
+	def maybe_wait_for_rate_limit(self, context: str, force: bool = False) -> None:
+		"""
+		Sleep until reset when rate limit is very low.
+		"""
+		self._rate_check_count += 1
+		if (not force) and (self._rate_check_count % 15 != 0):
+			return
+		rate_limit = self.client.get_rate_limit().core
+		reset_time = self.normalize_datetime(rate_limit.reset)
+		remaining = rate_limit.remaining
+		self.log(
+			f"Rate limit check ({context}): remaining={remaining}, "
+			+ f"reset_at={reset_time.isoformat()}"
+		)
+		if remaining > self._low_remaining_threshold:
+			return
+		sleep_seconds = int((reset_time - datetime.now(timezone.utc)).total_seconds()) + 1
+		if sleep_seconds <= 0:
+			return
+		self.log(
+			f"Rate limit is low ({remaining}); sleeping {sleep_seconds}s until reset."
+		)
+		time.sleep(sleep_seconds)
+
+	#============================================
+	def raise_from_github_error(self, error: Exception, context: str) -> None:
+		"""
+		Raise a human-readable rate-limit error or re-raise original.
+		"""
+		status = getattr(error, "status", None)
+		if status != 403:
+			raise error
+		reset_text = "unknown"
+		remaining_text = "unknown"
+		try:
+			rate_limit = self.client.get_rate_limit().core
+			reset_time = self.normalize_datetime(rate_limit.reset)
+			reset_text = reset_time.isoformat()
+			remaining_text = str(rate_limit.remaining)
+		except Exception:
+			pass
+		raise RateLimitError(
+			"GitHub API rate limit exceeded while "
+			+ f"{context}; remaining={remaining_text}; reset_at={reset_text}. "
+			+ "Provide settings.yaml github.token for higher limits."
+		)
+
+	#============================================
+	def list_repos(self, user: str):
+		"""
+		List owner repositories sorted by updated timestamp.
+		"""
+		self.maybe_wait_for_rate_limit("list_repos", force=True)
+		try:
+			return self.client.get_user(user).get_repos(
+				type="owner",
+				sort="updated",
+				direction="desc",
+			)
+		except self._github_exception_class as error:
+			self.raise_from_github_error(error, f"listing repos for {user}")
+
+	#============================================
+	def list_commits(self, repo_obj, since: datetime, until: datetime):
+		"""
+		List repository commits inside time window.
+		"""
+		self.maybe_wait_for_rate_limit(f"list_commits {repo_obj.full_name}")
+		try:
+			return repo_obj.get_commits(since=since, until=until)
+		except self._github_exception_class as error:
+			self.raise_from_github_error(error, f"listing commits for {repo_obj.full_name}")
+
+	#============================================
+	def list_issues(self, repo_obj, since: datetime):
+		"""
+		List repository issues and pull requests updated since window start.
+		"""
+		self.maybe_wait_for_rate_limit(f"list_issues {repo_obj.full_name}")
+		try:
+			return repo_obj.get_issues(
+				state="all",
+				since=since,
+				sort="updated",
+				direction="desc",
+			)
+		except self._github_exception_class as error:
+			self.raise_from_github_error(error, f"listing issues for {repo_obj.full_name}")
+
+	#============================================
+	def get_file_content(self, repo_obj, path: str, ref: str) -> dict | None:
+		"""
+		Get one file content payload with metadata.
+		"""
+		self.maybe_wait_for_rate_limit(f"get_file_content {repo_obj.full_name} {path}")
+		try:
+			if ref:
+				content = repo_obj.get_contents(path, ref=ref)
+			else:
+				content = repo_obj.get_contents(path)
+		except self._github_exception_class as error:
+			status = getattr(error, "status", None)
+			if status == 404:
+				return None
+			self.raise_from_github_error(
+				error,
+				f"fetching {path} for {repo_obj.full_name}",
+			)
+		if isinstance(content, list):
+			return None
+		text = content.decoded_content.decode("utf-8", errors="replace")
+		result = {
+			"path": getattr(content, "path", path),
+			"sha": getattr(content, "sha", ""),
+			"size": getattr(content, "size", 0),
+			"text": text,
+		}
+		return result
+
+	#============================================
+	def get_file_text(self, repo_obj, path: str, ref: str) -> str | None:
+		"""
+		Get decoded text for one file path.
+		"""
+		payload = self.get_file_content(repo_obj, path, ref)
+		if payload is None:
+			return None
+		return payload["text"]

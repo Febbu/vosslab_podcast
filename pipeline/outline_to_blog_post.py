@@ -3,8 +3,18 @@ import argparse
 import html
 import json
 import os
+from datetime import datetime
 
 import pipeline_text_utils
+
+
+#============================================
+def log_step(message: str) -> None:
+	"""
+	Print one timestamped progress line.
+	"""
+	now_text = datetime.now().strftime("%H:%M:%S")
+	print(f"[outline_to_blog_post {now_text}] {message}", flush=True)
 
 
 #============================================
@@ -131,9 +141,17 @@ def main() -> None:
 	Generate the blog post with a hard word limit.
 	"""
 	args = parse_args()
+	log_step(
+		"Starting blog stage with "
+		+ f"input={os.path.abspath(args.input)}, output={os.path.abspath(args.output)}, "
+		+ f"word_limit={args.word_limit}"
+	)
+	log_step("Loading outline JSON.")
 	outline = load_outline(args.input)
+	log_step("Building blog paragraphs from outline data.")
 	paragraphs = build_blog_paragraphs(outline)
 	body_text = " ".join(paragraphs).strip()
+	log_step("Applying word limit trim.")
 	trimmed_body = pipeline_text_utils.trim_to_word_limit(body_text, args.word_limit)
 	pipeline_text_utils.assert_word_limit(trimmed_body, args.word_limit)
 
@@ -143,15 +161,17 @@ def main() -> None:
 	)
 	final_paragraphs = [segment.strip() for segment in trimmed_body.split(". ") if segment.strip()]
 	final_paragraphs = [segment if segment.endswith(".") else segment + "." for segment in final_paragraphs]
+	log_step("Rendering HTML document.")
 	document = build_html_document(title, final_paragraphs)
 
 	output_path = os.path.abspath(args.output)
 	os.makedirs(os.path.dirname(output_path), exist_ok=True)
+	log_step(f"Writing blog output to {output_path}")
 	with open(output_path, "w", encoding="utf-8") as handle:
 		handle.write(document)
 
 	word_count = pipeline_text_utils.count_words(trimmed_body)
-	print(f"Wrote {output_path} ({word_count} words)")
+	log_step(f"Wrote {output_path} ({word_count} words)")
 
 
 if __name__ == "__main__":

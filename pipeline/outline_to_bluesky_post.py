@@ -2,8 +2,18 @@
 import argparse
 import json
 import os
+from datetime import datetime
 
 import pipeline_text_utils
+
+
+#============================================
+def log_step(message: str) -> None:
+	"""
+	Print one timestamped progress line.
+	"""
+	now_text = datetime.now().strftime("%H:%M:%S")
+	print(f"[outline_to_bluesky_post {now_text}] {message}", flush=True)
 
 
 #============================================
@@ -72,18 +82,27 @@ def main() -> None:
 	Generate Bluesky text with a hard character limit.
 	"""
 	args = parse_args()
+	log_step(
+		"Starting bluesky stage with "
+		+ f"input={os.path.abspath(args.input)}, output={os.path.abspath(args.output)}, "
+		+ f"char_limit={args.char_limit}"
+	)
+	log_step("Loading outline JSON.")
 	outline = load_outline(args.input)
+	log_step("Building social text from outline data.")
 	text = build_bluesky_text(outline)
+	log_step("Applying character limit trim.")
 	trimmed = pipeline_text_utils.trim_to_char_limit(text, args.char_limit)
 	pipeline_text_utils.assert_char_limit(trimmed, args.char_limit)
 
 	output_path = os.path.abspath(args.output)
 	os.makedirs(os.path.dirname(output_path), exist_ok=True)
+	log_step(f"Writing Bluesky output to {output_path}")
 	with open(output_path, "w", encoding="utf-8") as handle:
 		handle.write(trimmed)
 		handle.write("\n")
 
-	print(f"Wrote {output_path} ({len(trimmed)} chars)")
+	log_step(f"Wrote {output_path} ({len(trimmed)} chars)")
 
 
 if __name__ == "__main__":

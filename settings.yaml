@@ -1,8 +1,17 @@
 github:
   username: vosslab
+  token: ""
 
 llm:
-  transport: ollama
-  model: ""
   max_tokens: 1200
   repo_limit: 0
+  providers:
+    apple:
+      enabled: true
+    ollama:
+      enabled: false
+      models:
+        - name: "qwen2.5:7b"
+          enabled: true
+        - name: "llama3.2:3b"
+          enabled: false

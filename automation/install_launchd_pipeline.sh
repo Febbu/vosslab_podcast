@@ -11,14 +11,24 @@ STDOUT_LOG="$REPO_ROOT/out/launchd_pipeline.log"
 STDERR_LOG="$REPO_ROOT/out/launchd_pipeline.error.log"
 GUI_DOMAIN="gui/$(id -u)"
 
+log_step() {
+	local now_text
+	now_text="$(date +"%H:%M:%S")"
+	echo "[install_launchd_pipeline ${now_text}] $*"
+}
+
+log_step "Installing launchd job from repo root: $REPO_ROOT"
+
+log_step "Ensuring LaunchAgents and output directories exist."
 mkdir -p "$LAUNCH_AGENTS_DIR"
 mkdir -p "$REPO_ROOT/out"
 
 if [[ ! -x "$RUN_SCRIPT" ]]; then
-	echo "Missing executable run script: $RUN_SCRIPT"
+	log_step "Missing executable run script: $RUN_SCRIPT"
 	exit 1
 fi
 
+log_step "Writing launchd plist to $PLIST_PATH"
 cat > "$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -53,11 +63,12 @@ cat > "$PLIST_PATH" <<EOF
 </plist>
 EOF
 
+log_step "Reloading launchd job in domain $GUI_DOMAIN"
 launchctl bootout "$GUI_DOMAIN" "$PLIST_PATH" >/dev/null 2>&1 || true
 launchctl bootstrap "$GUI_DOMAIN" "$PLIST_PATH"
 launchctl enable "$GUI_DOMAIN/$LABEL"
 
-echo "Installed launchd job: $LABEL"
-echo "Plist: $PLIST_PATH"
-echo "Schedule: every Monday at 09:00 local time"
-echo "Logs: $STDOUT_LOG and $STDERR_LOG"
+log_step "Installed launchd job: $LABEL"
+log_step "Plist: $PLIST_PATH"
+log_step "Schedule: every Monday at 09:00 local time"
+log_step "Logs: $STDOUT_LOG and $STDERR_LOG"

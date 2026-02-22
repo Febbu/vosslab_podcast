@@ -1,6 +1,6 @@
 # Core pipeline runtime
-requests
 pyyaml
+PyGithub
 numpy
 soundfile
 torch

@@ -3,6 +3,8 @@ import json
 import os
 import sys
 
+import pytest
+
 import git_file_utils
 
 
@@ -20,11 +22,7 @@ def make_args(**kwargs) -> argparse.Namespace:
 	Build a namespace compatible with resolve_window_days.
 	"""
 	defaults = {
-		"last_day": False,
-		"last_two_days": False,
-		"last_week": False,
-		"last_month": False,
-		"window_days": None,
+		"last_n_days": 1,
 	}
 	defaults.update(kwargs)
 	return argparse.Namespace(**defaults)
@@ -40,13 +38,22 @@ def test_resolve_window_days_default_last_day() -> None:
 
 
 #============================================
-def test_resolve_window_days_presets() -> None:
+def test_resolve_window_days_custom_count() -> None:
 	"""
-	Preset options should resolve to expected day counts.
+	Custom day count should be returned as-is.
 	"""
-	assert fetch_github_data.resolve_window_days(make_args(last_two_days=True)) == 2
-	assert fetch_github_data.resolve_window_days(make_args(last_week=True)) == 7
-	assert fetch_github_data.resolve_window_days(make_args(last_month=True)) == 30
+	assert fetch_github_data.resolve_window_days(make_args(last_n_days=2)) == 2
+	assert fetch_github_data.resolve_window_days(make_args(last_n_days=7)) == 7
+	assert fetch_github_data.resolve_window_days(make_args(last_n_days=30)) == 30
+
+
+#============================================
+def test_resolve_window_days_rejects_invalid_value() -> None:
+	"""
+	Non-positive day counts should raise an error.
+	"""
+	with pytest.raises(RuntimeError):
+		fetch_github_data.resolve_window_days(make_args(last_n_days=0))
 
 
 #============================================

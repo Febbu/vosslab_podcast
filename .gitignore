@@ -1,6 +1,5 @@
 .venv/
 .venv_tts/
 out/
-__pycache__/
 report_*.txt
 .DS_Store

@@ -30,7 +30,7 @@ Generates a weekly multi-channel content package from GitHub activity.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r pip_requirements.txt
-python pipeline/fetch_github_data.py --settings settings.yaml --last-week
+python pipeline/fetch_github_data.py --settings settings.yaml --last-days 7
 python pipeline/outline_github_data.py --settings settings.yaml --repo-shards-dir out/outline_repos
 python pipeline/outline_to_blog_post.py
 python pipeline/outline_to_bluesky_post.py
@@ -42,12 +42,21 @@ Use root `settings.yaml` for default user and LLM preferences:
 ```yaml
 github:
   username: vosslab
+  token: ""
 
 llm:
-  transport: ollama
-  model: ""
   max_tokens: 1200
   repo_limit: 0
+  providers:
+    apple:
+      enabled: true
+    ollama:
+      enabled: false
+      models:
+        - name: "qwen2.5:7b"
+          enabled: true
+        - name: "llama3.2:3b"
+          enabled: false
 ```
 
 CLI flags still override settings values when provided.
@@ -59,7 +68,11 @@ CLI flags still override settings values when provided.
 - Recommended placement for vendored wrapper code: repo root at `local-llm-wrapper/`.
 - `pipeline/local-llm-wrapper/` is also supported by the loader if you move it later.
 - `apple-foundation-models` is a required Python dependency in `pip_requirements.txt`.
-- Default transport comes from `settings.yaml` (`llm.transport`).
+- Provider names for local-llm-wrapper are `apple` and `ollama`.
+- Default transport comes from `settings.yaml` enabled providers under `llm.providers`.
+- Exactly one provider should have `enabled: true`; if multiple are enabled, outline generation fails.
+- Apple provider does not use a model setting.
+- If Ollama is enabled, configure `llm.providers.ollama.models` and enable exactly one model.
 - Useful options:
   - `--llm-transport ollama|apple|auto`
   - `--llm-model <model-name>`
@@ -76,13 +89,7 @@ CLI flags still override settings values when provided.
 
 ## Fetch stage notes
 - Default user comes from `settings.yaml` (`github.username`), with fallback to `vosslab`.
-- Default window is `--last-day` (1 day) when no window flag is provided.
-- Preset options are mutually exclusive:
-  - `--last-day`
-  - `--last-two-days`
-  - `--last-week`
-  - `--last-month`
-- Custom window remains available via `--window-days N`.
+- Window length is set by `--last-days N` (default: `1`).
 - `pipeline/fetch_github_data.py` attempts to fetch `docs/CHANGELOG.md` for relevant repos and writes
   `repo_changelog` records when available.
 - Daily cache files are written by default to `out/daily_cache/`.
@@ -90,15 +97,15 @@ CLI flags still override settings values when provided.
 - Use `--skip-changelog` to skip changelog fetches.
 
 ## Optional auth
-- `pipeline/fetch_github_data.py` accepts `--token`.
-- If `--token` is not provided, it falls back to `GH_TOKEN` then `GITHUB_TOKEN`.
+- Put an optional PAT in `settings.yaml` as `github.token`.
+- If `github.token` is empty, fetch runs in unauthenticated mode with lower rate limits.
 
 ## GitHub Actions
 A workflow is included in `.github/workflows/weekly.yml` for optional manual runs.
 
 To enable:
 1. Push this repo to GitHub.
-2. Add a repository secret `GH_TOKEN` (a GitHub PAT) if you want higher rate limits.
+2. Provide a token in `settings.yaml` (`github.token`) if you want higher rate limits.
 3. This repo is currently local-first: no cron schedule is enabled by default.
 
 ## TTS (local, optional)

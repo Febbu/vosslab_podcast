@@ -2,11 +2,21 @@
 import argparse
 import json
 import os
+from datetime import datetime
 
 import numpy
 import soundfile
 import torch
 from qwen_tts import Qwen3TTSModel
+
+
+#============================================
+def log_step(message: str) -> None:
+	"""
+	Print one timestamped progress line.
+	"""
+	now_text = datetime.now().strftime("%H:%M:%S")
+	print(f"[script_to_audio {now_text}] {message}", flush=True)
 
 
 #============================================
@@ -180,35 +190,52 @@ def main() -> None:
 	Generate one WAV file from an N-speaker podcast script.
 	"""
 	args = parse_args()
+	log_step(
+		"Starting audio stage with "
+		+ f"script={os.path.abspath(args.script)}, output={os.path.abspath(args.output)}, "
+		+ f"voices={os.path.abspath(args.voices)}, model_id={args.model_id}"
+	)
 	script_path = os.path.abspath(args.script)
 	if not os.path.isfile(script_path):
 		raise FileNotFoundError(f"Missing script file: {script_path}")
 
+	log_step("Loading podcast script file.")
 	with open(script_path, "r", encoding="utf-8") as handle:
 		script_text = handle.read()
 	lines = parse_script_lines(script_text)
 	if not lines:
 		raise RuntimeError("No valid SPEAKER: text lines found in script.")
+	log_step(f"Parsed {len(lines)} speaker line(s) from script.")
 
 	device = choose_voice_device(args.device)
+	log_step(f"Loading TTS model on device: {device}")
 	model = Qwen3TTSModel.from_pretrained(
 		args.model_id,
 		device_map=device,
 		dtype=torch.float32,
 	)
 	supported_speakers = model.get_supported_speakers()
+	log_step(f"Model supports {len(supported_speakers)} speaker voice(s).")
 	script_speakers = ordered_unique_speakers(lines)
+	log_step(f"Script uses {len(script_speakers)} unique speaker label(s).")
 	config = load_voice_config(args.voices)
+	log_step("Building speaker-to-voice map.")
 	speaker_map = build_speaker_voice_map(
 		script_speakers,
 		config,
 		supported_speakers,
 	)
+	for speaker in speaker_map:
+		log_step(f"Voice map: {speaker} -> {speaker_map[speaker]}")
 
 	segments = []
 	sample_rate = None
-	for speaker, text in lines:
+	for index, (speaker, text) in enumerate(lines, start=1):
 		model_speaker = speaker_map[speaker]
+		log_step(
+			f"Generating audio for line {index}/{len(lines)}: "
+			+ f"speaker={speaker}, chars={len(text)}"
+		)
 		wavs, rate = model.generate_custom_voice(
 			text,
 			speaker=model_speaker,
@@ -223,15 +250,18 @@ def main() -> None:
 			raise RuntimeError("Sample rate mismatch between generated segments.")
 		segments.append(segment)
 		segments.append(silence(args.pause_seconds, rate))
+		log_step(f"Generated segment {index}; samples={len(segment)}, sample_rate={rate}")
 
 	if sample_rate is None:
 		raise RuntimeError("TTS returned no audio segments.")
 
+	log_step("Concatenating generated segments into final waveform.")
 	audio = numpy.concatenate(segments)
 	output_path = os.path.abspath(args.output)
 	os.makedirs(os.path.dirname(output_path), exist_ok=True)
+	log_step(f"Writing WAV output to {output_path}")
 	soundfile.write(output_path, audio, sample_rate)
-	print(f"Wrote {output_path}")
+	log_step(f"Wrote {output_path}; total_samples={len(audio)}, sample_rate={sample_rate}")
 
 
 if __name__ == "__main__":

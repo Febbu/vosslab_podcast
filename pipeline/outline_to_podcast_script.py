@@ -2,8 +2,18 @@
 import argparse
 import json
 import os
+from datetime import datetime
 
 import pipeline_text_utils
+
+
+#============================================
+def log_step(message: str) -> None:
+	"""
+	Print one timestamped progress line.
+	"""
+	now_text = datetime.now().strftime("%H:%M:%S")
+	print(f"[outline_to_podcast_script {now_text}] {message}", flush=True)
 
 
 #============================================
@@ -191,10 +201,21 @@ def main() -> None:
 	Generate N-speaker podcast script with a hard word limit.
 	"""
 	args = parse_args()
+	log_step(
+		"Starting podcast script stage with "
+		+ f"input={os.path.abspath(args.input)}, output={os.path.abspath(args.output)}, "
+		+ f"num_speakers={args.num_speakers}, word_limit={args.word_limit}"
+	)
+	log_step("Loading outline JSON.")
 	outline = load_outline(args.input)
+	log_step("Building speaker label set.")
 	speaker_labels = build_speaker_labels(args.num_speakers)
+	log_step("Constructing raw speaker lines from outline.")
 	raw_lines = build_podcast_lines(outline, speaker_labels)
+	log_step(f"Raw lines generated: {len(raw_lines)}")
+	log_step("Applying global word limit trim to script lines.")
 	trimmed_lines = trim_lines_to_word_limit(raw_lines, args.word_limit)
+	log_step(f"Trimmed lines retained: {len(trimmed_lines)}")
 
 	spoken_word_count = count_script_words(trimmed_lines)
 	if spoken_word_count > args.word_limit:
@@ -211,10 +232,11 @@ def main() -> None:
 	output_path = os.path.abspath(args.output)
 	os.makedirs(os.path.dirname(output_path), exist_ok=True)
 	script_text = render_script_text(trimmed_lines)
+	log_step(f"Writing podcast script output to {output_path}")
 	with open(output_path, "w", encoding="utf-8") as handle:
 		handle.write(script_text)
 
-	print(
+	log_step(
 		f"Wrote {output_path} "
 		f"({spoken_word_count} words, {args.num_speakers} speakers)"
 	)

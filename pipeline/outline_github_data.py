@@ -14,6 +14,15 @@ REPO_SLUG_RE = re.compile(r"[^a-z0-9._-]+")
 
 
 #============================================
+def log_step(message: str) -> None:
+	"""
+	Print one timestamped progress line.
+	"""
+	now_text = datetime.now().strftime("%H:%M:%S")
+	print(f"[outline_github_data {now_text}] {message}", flush=True)
+
+
+#============================================
 def parse_args() -> argparse.Namespace:
 	"""
 	Parse command-line arguments.
@@ -233,15 +242,22 @@ def summarize_outline_with_llm(
 	"""
 	Generate repo and global summaries with local-llm-wrapper.
 	"""
+	log_step(
+		f"Initializing LLM summarization with transport={transport_name}, "
+		+ f"model={model_override or 'auto'}, max_tokens={max_tokens}, repo_limit={repo_limit}"
+	)
 	client = create_llm_client(transport_name, model_override)
 	repos = outline.get("repo_activity", [])
 	repo_total = len(repos)
 	selected_repos = repos
 	if repo_limit > 0:
 		selected_repos = repos[:repo_limit]
+	log_step(f"Summarizing {len(selected_repos)} repo(s) out of {repo_total} total.")
 
 	repo_summaries = []
 	for rank, bucket in enumerate(selected_repos, start=1):
+		repo_name = bucket.get("repo_full_name", "")
+		log_step(f"Generating repo outline {rank}/{len(selected_repos)}: {repo_name}")
 		prompt = build_repo_llm_prompt(outline, bucket, rank, repo_total)
 		repo_outline = client.generate(
 			prompt=prompt,
@@ -249,6 +265,7 @@ def summarize_outline_with_llm(
 			max_tokens=max_tokens,
 		).strip()
 		bucket["llm_repo_outline"] = repo_outline
+		log_step(f"Completed repo outline for {repo_name}; chars={len(repo_outline)}")
 		repo_summaries.append(
 			{
 				"repo_full_name": bucket.get("repo_full_name", ""),
@@ -257,6 +274,7 @@ def summarize_outline_with_llm(
 			}
 		)
 
+	log_step("Generating global weekly outline from repo summaries.")
 	global_prompt = build_global_llm_prompt(outline, repo_summaries)
 	global_outline = client.generate(
 		prompt=global_prompt,
@@ -267,6 +285,7 @@ def summarize_outline_with_llm(
 	outline["llm_repo_summaries_count"] = len(selected_repos)
 	outline["llm_transport"] = transport_name
 	outline["llm_model"] = model_override or "auto"
+	log_step(f"Completed global outline; chars={len(global_outline)}")
 	return outline
 
 
@@ -643,13 +662,14 @@ def write_outline_outputs(
 	with open(txt_path, "w", encoding="utf-8") as txt_handle:
 		txt_handle.write(outline_text)
 
-	print(f"Wrote {json_path}")
-	print(f"Wrote {txt_path}")
+	log_step(f"Wrote outline JSON: {json_path}")
+	log_step(f"Wrote outline text: {txt_path}")
 	if skip_repo_shards:
+		log_step("Skipping repo shard output by request.")
 		return
 
 	manifest_path = write_repo_outline_shards(outline, repo_shards_dir)
-	print(f"Wrote {manifest_path}")
+	log_step(f"Wrote repo shard manifest: {manifest_path}")
 
 
 #============================================
@@ -659,8 +679,8 @@ def main() -> None:
 	"""
 	args = parse_args()
 	settings, settings_path = pipeline_settings.load_settings(args.settings)
-	default_transport = pipeline_settings.get_setting_str(settings, ["llm", "transport"], "ollama")
-	default_model = pipeline_settings.get_setting_str(settings, ["llm", "model"], "")
+	default_transport = pipeline_settings.get_enabled_llm_transport(settings)
+	default_model = pipeline_settings.get_llm_provider_model(settings, default_transport)
 	default_max_tokens = pipeline_settings.get_setting_int(settings, ["llm", "max_tokens"], 1200)
 	default_repo_limit = pipeline_settings.get_setting_int(settings, ["llm", "repo_limit"], 0)
 
@@ -677,13 +697,20 @@ def main() -> None:
 	if repo_limit < 0:
 		raise RuntimeError("llm repo limit must be >= 0")
 
-	print(f"Using settings file: {settings_path}")
-	print(
+	log_step(f"Using settings file: {settings_path}")
+	log_step(
 		"Using LLM settings: "
 		+ f"transport={transport_name}, model={model_override or 'auto'}, "
 		+ f"max_tokens={max_tokens}, repo_limit={repo_limit}"
 	)
+	log_step(f"Parsing input JSONL: {os.path.abspath(args.input)}")
 	outline = parse_jsonl_to_outline(args.input)
+	log_step(
+		f"Parsed outline totals: repos={outline.get('totals', {}).get('repos', 0)}, "
+		+ f"commits={outline.get('totals', {}).get('commit_records', 0)}, "
+		+ f"issues={outline.get('totals', {}).get('issue_records', 0)}, "
+		+ f"prs={outline.get('totals', {}).get('pull_request_records', 0)}"
+	)
 	outline = summarize_outline_with_llm(
 		outline,
 		transport_name=transport_name,
@@ -698,6 +725,7 @@ def main() -> None:
 		args.repo_shards_dir,
 		args.skip_repo_shards,
 	)
+	log_step("Outline stage complete.")
 
 
 if __name__ == "__main__":

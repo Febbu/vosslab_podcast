@@ -409,3 +409,145 @@ Next actions
 1. Add settings support for additional pipeline defaults (for example output paths and speaker count) only if they are repeatedly changed by hand.
 2. Decide whether `settings.yaml` should include a weekly/default window preset for fetch stage automation.
 3. Continue verbosity pass across all scripts so each stage logs intent and progress consistently.
+
+---
+Session Update: 2026-02-22 (fetch_github_data.py migrated to PyGithub adapter)
+
+What changed
+- Added `pipeline/github_client.py` with a `GitHubClient` adapter class and `RateLimitError`.
+- Migrated `pipeline/fetch_github_data.py` from direct `requests` API calls to adapter-backed
+  PyGithub calls for:
+  - user repos
+  - repo commits in window
+  - repo issues/PRs updated since window start
+  - `docs/CHANGELOG.md` file reads from default branch
+- Kept CLI surface and output schema stable:
+  - Existing flags remain
+  - Existing JSONL `record_type` values and record keys remain
+- Added serializer helpers in `pipeline/fetch_github_data.py` to convert PyGithub objects into
+  REST-like dicts used by existing `build_*_record()` functions.
+- Added `PyGithub` to `pip_requirements.txt`.
+- Improved failure mode when PyGithub is not installed:
+  - script logs a clear dependency message and exits cleanly without traceback.
+
+What was tested
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/github_client.py pipeline/fetch_github_data.py`
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_fetch_github_data_features.py tests/test_pipeline_settings.py` (pass: `7 passed`)
+- Smoke execution without PyGithub installed confirms clean messaging (no traceback):
+  - `python3.12 pipeline/fetch_github_data.py --max-repos 1 ...`
+
+Next actions
+1. Install dependency locally: `pip install PyGithub` (or reinstall from `pip_requirements.txt`).
+2. Re-run fetch smoke with `--max-repos 1` to verify live PyGithub API path in your environment.
+3. Optionally add focused tests for serializer field parity against expected REST-like payload keys.
+
+---
+Session Update: 2026-02-22 (Explicit Progress Logging Across All Pipeline Scripts)
+
+What changed
+- Added explicit timestamped progress logs to all main pipeline stage scripts:
+  - `pipeline/outline_github_data.py`
+  - `pipeline/outline_to_blog_post.py`
+  - `pipeline/outline_to_bluesky_post.py`
+  - `pipeline/outline_to_podcast_script.py`
+  - `pipeline/script_to_audio.py`
+- Logging now reports stage start, major processing milestones, and final outputs for easier
+  local observability and machine-diff friendly run traces.
+- Added explicit timestamped progress logs to local automation shell scripts:
+  - `automation/run_local_pipeline.sh`
+  - `automation/install_launchd_pipeline.sh`
+  - `automation/uninstall_launchd_pipeline.sh`
+
+What was tested
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/outline_github_data.py pipeline/outline_to_blog_post.py pipeline/outline_to_bluesky_post.py pipeline/outline_to_podcast_script.py pipeline/script_to_audio.py`
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_outline_parser.py tests/test_content_pipeline_limits.py` (pass: `7 passed`)
+- `bash -n automation/run_local_pipeline.sh automation/install_launchd_pipeline.sh automation/uninstall_launchd_pipeline.sh`
+
+Next actions
+1. Run a full local pipeline once to verify desired verbosity level across long runs.
+2. Tune logging granularity if any stage is too noisy (for example per-line audio generation logs).
+3. Add equivalent progress logging to any future new stage scripts at creation time.
+
+---
+Session Update: 2026-02-22 (Progress Log Timestamp Format Simplified)
+
+What changed
+- Updated all newly added progress log prefixes in pipeline and automation scripts to use
+  time-only format `HH:MM:SS` instead of full ISO datetime with milliseconds/timezone.
+- Example new format:
+  - `[fetch_github_data 02:54:44]`
+- Applied to:
+  - `pipeline/fetch_github_data.py`
+  - `pipeline/outline_github_data.py`
+  - `pipeline/outline_to_blog_post.py`
+  - `pipeline/outline_to_bluesky_post.py`
+  - `pipeline/outline_to_podcast_script.py`
+  - `pipeline/script_to_audio.py`
+  - `automation/run_local_pipeline.sh`
+  - `automation/install_launchd_pipeline.sh`
+  - `automation/uninstall_launchd_pipeline.sh`
+
+What was tested
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/fetch_github_data.py pipeline/outline_github_data.py pipeline/outline_to_blog_post.py pipeline/outline_to_bluesky_post.py pipeline/outline_to_podcast_script.py pipeline/script_to_audio.py`
+- `bash -n automation/run_local_pipeline.sh automation/install_launchd_pipeline.sh automation/uninstall_launchd_pipeline.sh`
+
+Next actions
+1. Run one full local pipeline execution and confirm the new short log format is preferred.
+2. If needed, trim any overly chatty per-item logs while retaining stage-level visibility.
+
+---
+Session Update: 2026-02-22 (Argparse Minimization in fetch_github_data.py)
+
+What changed
+- Simplified `pipeline/fetch_github_data.py` CLI for argument minimization:
+  - Removed `--api-base`.
+  - Removed `--token`.
+  - Replaced window presets and `--window-days` with one option: `--last-days N` (default 1).
+- Updated fetch auth source to use `settings.yaml` only:
+  - optional token now read from `github.token`.
+  - removed `GH_TOKEN`/`GITHUB_TOKEN` fallback logic from fetch script.
+- Added `github.token` key to root `settings.yaml`.
+- Updated `automation/run_local_pipeline.sh` fetch call to use `--last-days 7`.
+- Updated `README.md` to reflect minimized fetch arguments and settings-based token configuration.
+- Updated `tests/test_fetch_github_data_features.py` for new window argument behavior and validation.
+- Removed `requests` from `pip_requirements.txt` (no longer used after PyGithub migration).
+- Updated `pipeline/github_client.py` rate-limit guidance text to reference `settings.yaml`.
+
+What was tested
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/fetch_github_data.py pipeline/github_client.py tests/test_fetch_github_data_features.py`
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_fetch_github_data_features.py tests/test_pipeline_settings.py tests/test_outline_parser.py tests/test_content_pipeline_limits.py` (pass: `15 passed`)
+- `source source_me.sh && python3.12 pipeline/fetch_github_data.py --help`
+
+Next actions
+1. Set `github.token` in `settings.yaml` for higher rate limits when needed.
+2. Run one local fetch smoke (`--max-repos 1`) after installing PyGithub in runtime environment.
+3. Apply similar argparse minimization pass to other scripts only where users rarely change flags.
+
+---
+Session Update: 2026-02-22 (LLM Provider Flags in settings.yaml)
+
+What changed
+- Confirmed and kept shared YAML loader module: `pipeline/pipeline_settings.py`.
+- Extended `pipeline/pipeline_settings.py` with provider-resolution helpers:
+  - `get_setting_bool(...)`
+  - `get_enabled_llm_transport(...)`
+  - `get_llm_provider_model(...)`
+- Updated `pipeline/outline_github_data.py` to use enabled-provider settings for default LLM
+  transport and model selection.
+- Added strict validation rule: if more than one LLM provider is enabled in `settings.yaml`,
+  outline generation raises a clear runtime error.
+- Updated root `settings.yaml` to provider-flag structure and set Apple as active local provider:
+  - `llm.providers.apple.enabled: true`
+  - `llm.providers.ollama.enabled: false`
+- Updated `README.md` to document provider names and single-enabled-provider expectation.
+- Expanded `tests/test_pipeline_settings.py` for enabled-provider and validation behavior.
+
+What was tested
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/pipeline_settings.py pipeline/outline_github_data.py tests/test_pipeline_settings.py`
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_pipeline_settings.py tests/test_outline_parser.py tests/test_content_pipeline_limits.py tests/test_fetch_github_data_features.py` (pass: `19 passed`)
+- `source source_me.sh && python3.12 pipeline/outline_github_data.py --help`
+
+Next actions
+1. Validate one real outline run using Apple transport from settings to confirm local runtime.
+2. If needed later, flip provider flags in `settings.yaml` to switch between Apple and Ollama.
+3. Consider removing `--llm-transport` CLI override if you want strict settings-only provider selection.
