@@ -1,0 +1,8 @@
+github:
+  username: vosslab
+
+llm:
+  transport: ollama
+  model: ""
+  max_tokens: 1200
+  repo_limit: 0

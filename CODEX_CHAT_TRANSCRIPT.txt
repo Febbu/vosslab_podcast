@@ -171,3 +171,241 @@ Next actions
 1. Approve open decisions in the plan (schema depth, canonical outline format, overflow policy, default `NUM_SPEAKERS`, audio format targets).
 2. Start implementation from Milestone M1 (`fetch_github_data.py` + JSONL contract + validation gates).
 3. Add `refactor_progress.md` so future plan updates can track active/completed/pending status cleanly.
+
+---
+Session Update: 2026-02-22 (Pipeline Implemented End-to-End)
+
+What changed
+- Implemented staged pipeline scripts:
+  - `fetch_github_data.py`
+  - `outline_github_data.py`
+  - `outline_to_blog_post.py`
+  - `outline_to_bluesky_post.py`
+  - `outline_to_podcast_script.py`
+  - `script_to_audio.py`
+- Added shared text-limit helper module:
+  - `pipeline_text_utils.py`
+- Added targeted tests for parser aggregation and output-limit behavior:
+  - `tests/test_outline_parser.py`
+  - `tests/test_content_pipeline_limits.py`
+- Updated workflow and docs to run/document the new staged flow:
+  - `.github/workflows/weekly.yml`
+  - `README.md`
+  - `docs/CHANGELOG.md`
+
+What was tested
+- `python3 -m py_compile fetch_github_data.py outline_github_data.py outline_to_blog_post.py outline_to_bluesky_post.py outline_to_podcast_script.py script_to_audio.py pipeline_text_utils.py`
+- `python3 -m py_compile tests/test_outline_parser.py tests/test_content_pipeline_limits.py`
+- `.venv/bin/python fetch_github_data.py --help` (pass)
+- `.venv/bin/python -m pytest -q tests/test_outline_parser.py tests/test_content_pipeline_limits.py` (pass: `5 passed`)
+- Live fetch smoke:
+  - `.venv/bin/python fetch_github_data.py --user vosslab --window-days 7 --max-repos 1 --output out/smoke_github_data.jsonl`
+- Smoke pipeline on sample JSONL:
+  - `python3 outline_github_data.py --input out/sample_github_data.jsonl --outline-json out/sample_outline.json --outline-txt out/sample_outline.txt`
+  - `python3 outline_to_blog_post.py --input out/sample_outline.json --output out/sample_blog_post.html --word-limit 500`
+  - `python3 outline_to_bluesky_post.py --input out/sample_outline.json --output out/sample_bluesky_post.txt --char-limit 140`
+  - `python3 outline_to_podcast_script.py --input out/sample_outline.json --output out/sample_podcast_script.txt --num-speakers 3 --word-limit 500`
+- Smoke pipeline on live-fetch output:
+  - `.venv/bin/python outline_github_data.py --input out/smoke_github_data.jsonl --outline-json out/smoke_outline.json --outline-txt out/smoke_outline.txt`
+  - `.venv/bin/python outline_to_blog_post.py --input out/smoke_outline.json --output out/smoke_blog_post.html --word-limit 500`
+  - `.venv/bin/python outline_to_bluesky_post.py --input out/smoke_outline.json --output out/smoke_bluesky_post.txt --char-limit 140`
+  - `.venv/bin/python outline_to_podcast_script.py --input out/smoke_outline.json --output out/smoke_podcast_script.txt --num-speakers 3 --word-limit 500`
+
+Next actions
+1. Run full weekly fetch without `--max-repos` to generate production-size `out/github_data.jsonl`.
+2. Install audio dependencies (`numpy`, `soundfile`, `torch`, `qwen_tts`) in TTS environment and run `script_to_audio.py`.
+3. Decide when to retire legacy scripts (`fetch_and_script.py`, `tts_generate.py`) after final signoff.
+
+---
+Session Update: 2026-02-22 (Fetch Stage Window Presets + Daily Cache + Changelog Pull)
+
+What changed
+- Updated `fetch_github_data.py` to support exclusive time-window presets:
+  - `--last-day` (default)
+  - `--last-two-days`
+  - `--last-week`
+  - `--last-month`
+  - `--window-days N` for custom windows
+- Added relevant-repo changelog ingestion in `fetch_github_data.py`:
+  - Attempts to fetch `docs/CHANGELOG.md` from each relevant repo.
+  - Emits `repo_changelog` records with latest dated entry extraction.
+- Added per-day cache output in `fetch_github_data.py`:
+  - Writes one JSONL per day in the active window to `--daily-cache-dir` (default `out/daily_cache`).
+- Updated workflow and docs:
+  - `.github/workflows/weekly.yml` now uses `--last-week` and writes `out/daily_cache`.
+  - `README.md` now documents window presets, changelog records, and daily cache behavior.
+- Added targeted tests:
+  - `tests/test_fetch_github_data_features.py`
+
+What was tested
+- `.venv/bin/python -m py_compile fetch_github_data.py tests/test_fetch_github_data_features.py` (pass)
+- `.venv/bin/python fetch_github_data.py --help` (pass, new flags visible)
+- `.venv/bin/python -m pytest -q tests/test_fetch_github_data_features.py` (pass: `4 passed`)
+- Live fetch smoke with day-cache output:
+  - `.venv/bin/python fetch_github_data.py --user vosslab --last-week --max-repos 1 --output out/smoke_github_data.jsonl --daily-cache-dir out/smoke_daily_cache`
+  - Result: main JSONL written plus 7 daily cache files.
+- Downstream smoke remained functional:
+  - `.venv/bin/python outline_github_data.py --input out/smoke_github_data.jsonl --outline-json out/smoke_outline2.json --outline-txt out/smoke_outline2.txt`
+  - `.venv/bin/python outline_to_blog_post.py --input out/smoke_outline2.json --output out/smoke_blog_post2.html --word-limit 500`
+
+Next actions
+1. Run full fetch without `--max-repos` to populate production `out/github_data.jsonl` and daily cache files.
+2. Decide whether changelog records should include only latest entry (current behavior) or full file text.
+3. Run full staged pipeline and then validate `script_to_audio.py` in TTS environment.
+
+---
+Session Update: 2026-02-22 (Repo Structure Cleanup + Repo-Sharded Outlines)
+
+What changed
+- Reorganized code to reduce root clutter:
+  - Pipeline scripts moved under `pipeline/`
+  - Local scheduling scripts moved under `automation/`
+- Added local macOS automation helpers:
+  - `automation/run_local_pipeline.sh`
+  - `automation/install_launchd_pipeline.sh`
+  - `automation/uninstall_launchd_pipeline.sh`
+- Updated references in docs/workflow/tests to new paths under `pipeline/`.
+- Enhanced `pipeline/outline_github_data.py` with per-repo sharding:
+  - Writes one JSON shard and one text shard per repo.
+  - Writes manifest index at `out/outline_repos/index.json`.
+  - Added flags: `--repo-shards-dir` and `--skip-repo-shards`.
+- Added parser coverage for shard output:
+  - `tests/test_outline_parser.py` now validates shard file generation and manifest contents.
+
+What was tested
+- `.venv/bin/python -m py_compile pipeline/fetch_github_data.py pipeline/outline_github_data.py pipeline/outline_to_blog_post.py pipeline/outline_to_bluesky_post.py pipeline/outline_to_podcast_script.py pipeline/script_to_audio.py pipeline/pipeline_text_utils.py tests/test_outline_parser.py tests/test_content_pipeline_limits.py tests/test_fetch_github_data_features.py` (pass)
+- `.venv/bin/python -m pytest -q tests/test_outline_parser.py tests/test_content_pipeline_limits.py tests/test_fetch_github_data_features.py` (pass: `9 passed`)
+- `.venv/bin/python pipeline/outline_github_data.py --input out/smoke_github_data.jsonl --outline-json out/smoke_outline3.json --outline-txt out/smoke_outline3.txt --repo-shards-dir out/smoke_outline_repos` (pass)
+- Shell syntax checks:
+  - `bash -n automation/run_local_pipeline.sh automation/install_launchd_pipeline.sh automation/uninstall_launchd_pipeline.sh` (pass)
+
+Next actions
+1. Run full fetch and outline generation to populate repo shard files with real multi-repo data.
+2. Update downstream summarization stage to consume `out/outline_repos/index.json` and summarize per repo.
+3. Validate local `launchd` install/uninstall flow on macOS user session.
+
+---
+Session Update: 2026-02-22 (LLM Summarizer Wired into outline_github_data.py)
+
+What changed
+- Updated `pipeline/outline_github_data.py` to use `local-llm-wrapper` for outline summarization.
+- Added LLM-generated fields to output:
+  - `llm_repo_outline` per repo in `repo_activity`
+  - `llm_global_outline` for weekly cross-repo summary
+- Added CLI controls:
+  - `--llm-transport` (`ollama`, `apple`, `auto`)
+  - `--llm-model`
+  - `--llm-max-tokens`
+  - `--llm-repo-limit`
+  - `--disable-llm` (deterministic fallback mode)
+- Kept deterministic aggregation as data backbone, but default mode now runs LLM summarization.
+- Added test coverage for LLM summarization function wiring in `tests/test_outline_parser.py`.
+- Updated README and changelog to document the LLM outline behavior.
+
+What was tested
+- `.venv/bin/python -m py_compile pipeline/outline_github_data.py tests/test_outline_parser.py` (pass)
+- `.venv/bin/python -m pytest -q tests/test_outline_parser.py` (pass: `4 passed`)
+- `.venv/bin/python pipeline/outline_github_data.py --help` (pass; LLM flags visible)
+
+Next actions
+1. Run `pipeline/outline_github_data.py` against your real weekly JSONL with `--llm-transport ollama`.
+2. Verify Ollama model choice and tune `--llm-max-tokens` / `--llm-repo-limit` for latency.
+3. Optionally wire blog/bluesky/podcast scripts to consume `llm_global_outline` and `llm_repo_outline`.
+
+---
+Session Update: 2026-02-22 (Dependency Manifest + Brewfile for Pipeline and LLM Wrapper)
+
+What changed
+- Updated `pip_requirements.txt` to reflect core pipeline runtime dependencies and include notes
+  about local-llm-wrapper runtime expectations.
+- Added root `Brewfile` for macOS system dependencies used by pipeline + local LLM runtime:
+  - `python@3.12`
+  - `ollama`
+  - `libsndfile`
+  - `ffmpeg`
+- Updated `README.md` local setup to use:
+  - `pip install -r pip_requirements.txt`
+  - `brew bundle --file Brewfile`
+- Updated `automation/run_local_pipeline.sh` setup hint to reference `pip_requirements.txt`.
+
+What was tested
+- `python3 tests/check_ascii_compliance.py -i pip_requirements.txt` (pass)
+- `python3 tests/check_ascii_compliance.py -i Brewfile` (pass)
+- `python3 tests/check_ascii_compliance.py -i README.md` (pass)
+- Existing parser test gate remained green:
+  - `.venv/bin/python -m pytest -q tests/test_outline_parser.py` (pass: `4 passed`)
+
+Next actions
+1. Run `brew bundle --file Brewfile` on macOS host to install system packages.
+2. Recreate/refresh `.venv` from `pip_requirements.txt` and run end-to-end local pipeline.
+3. Verify local Ollama model availability for `pipeline/outline_github_data.py --llm-transport ollama`.
+
+---
+Session Update: 2026-02-22 (apple-foundation-models Required)
+
+What changed
+- Updated `pip_requirements.txt` to make `apple-foundation-models` a required dependency.
+- Updated `README.md` LLM section to state `apple-foundation-models` is required.
+- Updated `docs/CHANGELOG.md` to record the new dependency requirement.
+
+What was tested
+- `python3 tests/check_ascii_compliance.py -i pip_requirements.txt` (pass)
+- `python3 tests/check_ascii_compliance.py -i README.md` (pass)
+- `python3 tests/check_ascii_compliance.py -i docs/CHANGELOG.md` (pass)
+
+Next actions
+1. Reinstall environment dependencies from `pip_requirements.txt`.
+2. Validate Apple transport on target macOS host:
+   - `pipeline/outline_github_data.py --llm-transport apple`
+3. Keep Ollama path available as fallback when Apple runtime is unavailable.
+
+---
+Session Update: 2026-02-22 (LLM-Only Outline Mode)
+
+What changed
+- Updated `pipeline/outline_github_data.py` to make LLM summarization mandatory on every run.
+- Removed deterministic-only toggle argument `--disable-llm`.
+- Updated `README.md` wording to remove "by default" and describe LLM summarization as the only mode.
+- Updated `docs/CHANGELOG.md` with the LLM-only mode change.
+
+What was tested
+- `.venv/bin/python pipeline/outline_github_data.py --help` (pass; `--disable-llm` no longer shown)
+- `.venv/bin/python -m py_compile pipeline/outline_github_data.py` (pass)
+- `.venv/bin/python -m pytest -q tests/test_outline_parser.py` (pass: `4 passed`)
+
+Next actions
+1. Run real weekly outline generation with Ollama:
+   - `pipeline/outline_github_data.py --llm-transport ollama`
+2. Validate Apple path on compatible macOS host:
+   - `pipeline/outline_github_data.py --llm-transport apple`
+3. Tune `--llm-max-tokens` and `--llm-repo-limit` for runtime/cost constraints.
+
+---
+Session Update: 2026-02-22 (settings.yaml + PyYAML Defaults for User and LLM)
+
+What changed
+- Added required dependency `pyyaml` to `pip_requirements.txt`.
+- Added root `settings.yaml` with:
+  - `github.username`
+  - `llm.transport`, `llm.model`, `llm.max_tokens`, `llm.repo_limit`
+- Added `pipeline/pipeline_settings.py` for shared YAML settings loading/resolution helpers.
+- Updated `pipeline/fetch_github_data.py`:
+  - New `--settings` flag (default `settings.yaml`)
+  - Default GitHub username now reads from `settings.yaml` and falls back to `vosslab`
+  - CLI `--user` still overrides settings
+- Updated `pipeline/outline_github_data.py`:
+  - New `--settings` flag (default `settings.yaml`)
+  - Default LLM transport/model/max_tokens/repo_limit now read from `settings.yaml`
+  - CLI LLM flags still override settings
+- Updated `automation/run_local_pipeline.sh` to pass `--settings settings.yaml` for fetch + outline.
+- Updated `README.md` with settings file documentation and override behavior.
+- Added `tests/test_pipeline_settings.py`.
+
+What was tested
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/pipeline_settings.py pipeline/fetch_github_data.py pipeline/outline_github_data.py tests/test_pipeline_settings.py`
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_pipeline_settings.py tests/test_fetch_github_data_features.py tests/test_outline_parser.py` (pass: `11 passed`)
+
+Next actions
+1. Add settings support for additional pipeline defaults (for example output paths and speaker count) only if they are repeatedly changed by hand.
+2. Decide whether `settings.yaml` should include a weekly/default window preset for fetch stage automation.
+3. Continue verbosity pass across all scripts so each stage logs intent and progress consistently.

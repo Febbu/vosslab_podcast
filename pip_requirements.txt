@@ -1,5 +1,12 @@
+# Core pipeline runtime
 requests
+pyyaml
+numpy
 soundfile
 torch
-numpy
 qwen_tts
+apple-foundation-models
+
+# local-llm-wrapper runtime notes:
+# - Ollama transport uses stdlib only.
+# - Apple transport now requires apple-foundation-models.
