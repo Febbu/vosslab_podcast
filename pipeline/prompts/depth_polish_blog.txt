@@ -1,0 +1,12 @@
+You are refining {{draft_count}} blog post drafts into one final Markdown blog post.
+
+{{drafts_block}}
+
+Rules:
+- Do not add new facts. Use only information present in the drafts above.
+- If drafts disagree on a detail, choose the version that is more specific and more consistent with repository data.
+- If there are {{draft_count}} drafts, pick the strongest draft as the base, then selectively borrow specific sentences from others. Do not average or blend into blandness.
+- The final output must be clean Markdown with a single H1 title.
+- Target approximately {{target_value}} {{target_unit}}.
+
+Output only the final blog post Markdown. No commentary.

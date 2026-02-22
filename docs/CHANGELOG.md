@@ -1,6 +1,30 @@
 ## 2026-02-22
 
 ### Additions and New Features
+- Added [docs/DESIGN_PHILOSOPHY.md](docs/DESIGN_PHILOSOPHY.md) documenting the pipeline's core
+  design principles: cheap-but-mediocre local models, patience-for-quality tradeoff, caching for
+  resilience, the depth system (1-4), referee pattern, and anti-hallucination guardrails.
+- Added link to design philosophy doc in [README.md](README.md).
+- Added `pipeline/podlib/depth_orchestrator.py` with shared depth pipeline logic: `validate_depth`,
+  `compute_draft_count`, `needs_referee`, `needs_polish`, `build_referee_brackets`,
+  `parse_referee_winner`, and `run_depth_pipeline`. Supports depth 1-4 with draft caching,
+  referee tournament brackets, polish passes, and anti-hallucination quality-check fallback.
+- Added `--depth` / `-d` flag (1-4) to all 4 LLM pipeline scripts: `blog_to_bluesky_post.py`,
+  `blog_to_podcast_script.py`, `github_data_to_outline.py`, `outline_to_blog_post.py`. CLI value
+  overrides `settings.yaml` default. Depth 1 preserves current single-draft behavior.
+- Added `llm.depth` setting to `settings.yaml` (default 1) and `get_llm_depth()` accessor to
+  `pipeline/podlib/pipeline_settings.py`.
+- Added `compute_depth_draft_fingerprint()` and `build_depth_cache_path()` to
+  `pipeline/podlib/outline_draft_cache.py` for depth-aware caching with depth and draft_index
+  in the fingerprint to prevent cache key collisions.
+- Added `--depth` passthrough to `automation/run_local_pipeline.py` for outline, blog, bluesky,
+  and podcast_script stages.
+- Added 8 prompt templates in `pipeline/prompts/`: 4 referee prompts (`depth_referee_blog.txt`,
+  `depth_referee_outline.txt`, `depth_referee_bluesky.txt`, `depth_referee_podcast.txt`) and
+  4 polish prompts (`depth_polish_blog.txt`, `depth_polish_outline.txt`,
+  `depth_polish_bluesky.txt`, `depth_polish_podcast.txt`).
+- Added `tests/test_depth_orchestrator.py` with pure-logic unit tests for all depth orchestrator
+  functions including depth pipeline mock integration tests for depth 1, 2, and 4.
 - Added `parse_all_changelog_entries()` to `pipeline/fetch_github_data.py` that extracts all
   dated changelog sections instead of only the latest one. Each `## YYYY-MM-DD` section is
   returned as a `(heading, date, entry_text)` tuple.

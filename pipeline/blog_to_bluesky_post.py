@@ -2,9 +2,11 @@
 import argparse
 import glob
 import os
+import random
 import re
 from datetime import datetime
 
+from podlib import depth_orchestrator
 from podlib import outline_llm
 from podlib import pipeline_settings
 from podlib import pipeline_text_utils
@@ -74,6 +76,10 @@ def parse_args() -> argparse.Namespace:
 		type=int,
 		default=None,
 		help="Maximum generation tokens (defaults from settings.yaml).",
+	)
+	parser.add_argument(
+		'-d', '--depth', dest='depth', type=int, default=None,
+		help="LLM generation depth 1-4 (higher = more candidates, better quality).",
 	)
 	args = parser.parse_args()
 	return args
@@ -269,47 +275,146 @@ def build_bluesky_trim_prompt(draft_text: str, char_limit: int) -> str:
 
 
 #============================================
+def _referee_bluesky(
+	client,
+	draft_a: str,
+	draft_b: str,
+	max_tokens: int,
+) -> str:
+	"""
+	Run referee comparison between two Bluesky draft candidates.
+	"""
+	# randomize label order to avoid positional bias
+	labels = [("A", "B"), ("B", "A")]
+	label_a, label_b = random.choice(labels)
+	if label_a == "B":
+		draft_a, draft_b = draft_b, draft_a
+	template = prompt_loader.load_prompt("depth_referee_bluesky.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"label_a": label_a,
+		"label_b": label_b,
+		"draft_a": draft_a,
+		"draft_b": draft_b,
+	})
+	raw = client.generate(
+		prompt=prompt,
+		purpose="bluesky referee",
+		max_tokens=max_tokens,
+	).strip()
+	return raw
+
+
+#============================================
+def _polish_bluesky(
+	client,
+	drafts: list,
+	depth: int,
+	char_limit: int,
+	max_tokens: int,
+) -> str:
+	"""
+	Run polish pass to merge multiple Bluesky drafts into one final post.
+	"""
+	# build the drafts block for the template
+	parts = []
+	for i, draft in enumerate(drafts, start=1):
+		parts.append(f"Draft {i}:\n{draft}")
+	drafts_block = "\n\n".join(parts)
+	template = prompt_loader.load_prompt("depth_polish_bluesky.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"draft_count": str(len(drafts)),
+		"drafts_block": drafts_block,
+		"target_value": str(char_limit),
+		"target_unit": "characters",
+	})
+	polished = client.generate(
+		prompt=prompt,
+		purpose="bluesky polish",
+		max_tokens=max_tokens,
+	).strip()
+	polished = normalize_bluesky_text(polished)
+	return polished
+
+
+#============================================
 def generate_bluesky_text_with_llm(
 	blog_text: str,
 	transport_name: str,
 	model_override: str,
 	max_tokens: int,
 	char_limit: int,
+	depth: int = 1,
+	cache_dir: str = "",
+	continue_mode: bool = True,
 	logger=None,
 ) -> str:
 	"""
-	Generate Bluesky text with single-pass blog summarization.
+	Generate Bluesky text with single-pass or depth-pipeline blog summarization.
 	"""
 	client = create_llm_client(transport_name, model_override, quiet=False)
-	# single LLM call to summarize blog into a Bluesky post
+
+	# build the base summarization prompt once
 	prompt = build_bluesky_summarize_prompt(blog_text, char_limit)
-	if logger:
-		logger(f"Generating Bluesky summary (target={char_limit} chars).")
-	text = client.generate(
-		prompt=prompt,
-		purpose="bluesky blog summarize",
-		max_tokens=max_tokens,
-	).strip()
-	text = normalize_bluesky_text(text)
-	issue = bluesky_quality_issue(text)
-	if issue:
-		if logger:
-			logger(f"Summary flagged ({issue}); retrying once.")
-		retry_prompt = (
-			"Regenerate as one clean plain-text line.\n"
-			+ f"Target around {char_limit} characters.\n"
-			+ "No XML tags. No Markdown. No hashtags. No emojis.\n"
-			+ "Please do better.\n\n"
-			+ prompt
-		)
+
+	def _generate_one_draft() -> str:
+		"""Generate a single Bluesky draft."""
 		text = client.generate(
-			prompt=retry_prompt,
-			purpose="bluesky blog summarize retry",
+			prompt=prompt,
+			purpose="bluesky blog summarize",
 			max_tokens=max_tokens,
 		).strip()
 		text = normalize_bluesky_text(text)
+		issue = bluesky_quality_issue(text)
+		if issue:
+			# one retry on quality failure
+			retry_prompt = (
+				"Regenerate as one clean plain-text line.\n"
+				+ f"Target around {char_limit} characters.\n"
+				+ "No XML tags. No Markdown. No hashtags. No emojis.\n"
+				+ "Please do better.\n\n"
+				+ prompt
+			)
+			text = client.generate(
+				prompt=retry_prompt,
+				purpose="bluesky blog summarize retry",
+				max_tokens=max_tokens,
+			).strip()
+			text = normalize_bluesky_text(text)
+		return text
+
+	# depth 1: original behavior, single draft
+	if depth <= 1:
+		if logger:
+			logger(f"Generating Bluesky summary (target={char_limit} chars).")
+		text = _generate_one_draft()
+		if logger:
+			logger(f"Bluesky summary ready ({len(text)} chars; target={char_limit}).")
+		return text
+
+	# depth 2-4: use depth pipeline
 	if logger:
-		logger(f"Bluesky summary ready ({len(text)} chars; target={char_limit}).")
+		logger(f"Generating Bluesky summary with depth={depth} (target={char_limit} chars).")
+
+	def _referee(draft_a: str, draft_b: str) -> str:
+		return _referee_bluesky(client, draft_a, draft_b, max_tokens)
+
+	def _polish(drafts: list, d: int) -> str:
+		return _polish_bluesky(client, drafts, d, char_limit, max_tokens)
+
+	text = depth_orchestrator.run_depth_pipeline(
+		generate_draft_fn=_generate_one_draft,
+		referee_fn=_referee,
+		polish_fn=_polish,
+		depth=depth,
+		cache_dir=cache_dir,
+		cache_key_prefix="bluesky",
+		continue_mode=continue_mode,
+		max_tokens=max_tokens,
+		quality_check_fn=bluesky_quality_issue,
+		logger=logger,
+	)
+	if logger:
+		logger(f"Bluesky depth pipeline complete ({len(text)} chars; target={char_limit}).")
 	return text
 
 
@@ -326,6 +431,7 @@ def main() -> None:
 	default_max_tokens = pipeline_settings.get_setting_int(
 		settings, ["llm", "max_tokens"], 1200,
 	)
+	default_depth = pipeline_settings.get_llm_depth(settings, 1)
 	input_path = pipeline_settings.resolve_user_scoped_out_path(
 		args.input,
 		DEFAULT_INPUT_PATH,
@@ -349,6 +455,9 @@ def main() -> None:
 		raise RuntimeError("llm max tokens must be >= 1")
 	if args.char_limit < 1:
 		raise RuntimeError("char-limit must be >= 1")
+	# depth: CLI overrides settings.yaml
+	depth = args.depth if args.depth is not None else default_depth
+	depth_orchestrator.validate_depth(depth)
 
 	log_step(
 		"Starting bluesky stage with "
@@ -358,7 +467,8 @@ def main() -> None:
 	log_step(f"Using settings file: {settings_path}")
 	log_step(
 		"Using LLM settings: "
-		+ f"transport={transport_name}, model={model_override or 'auto'}, max_tokens={max_tokens}"
+		+ f"transport={transport_name}, model={model_override or 'auto'}, "
+		+ f"max_tokens={max_tokens}, depth={depth}"
 	)
 	log_step(
 		"LLM execution path for this run: "
@@ -372,6 +482,8 @@ def main() -> None:
 		return
 	log_step(f"Blog text loaded ({len(blog_text)} chars).")
 	log_step("Generating Bluesky text from blog summary.")
+	# build depth cache directory alongside the output
+	depth_cache_dir = os.path.join(os.path.dirname(os.path.abspath(output_path_arg)), "depth_cache")
 	try:
 		text = generate_bluesky_text_with_llm(
 			blog_text,
@@ -379,6 +491,9 @@ def main() -> None:
 			model_override=model_override,
 			max_tokens=max_tokens,
 			char_limit=args.char_limit,
+			depth=depth,
+			cache_dir=depth_cache_dir,
+			continue_mode=True,
 			logger=log_step,
 		)
 	except RuntimeError as error:

@@ -233,3 +233,16 @@ def get_llm_provider_model(settings: dict, provider_name: str) -> str:
 		"No enabled Ollama model found in settings.yaml. "
 		+ "Set exactly one llm.providers.ollama.models[].enabled to true."
 	)
+
+
+#============================================
+def get_llm_depth(settings: dict, default_value: int = 1) -> int:
+	"""
+	Read LLM depth setting from settings with validation.
+	"""
+	value = get_setting_int(settings, ["llm", "depth"], default_value)
+	if value < 1 or value > 4:
+		raise RuntimeError(
+			f"Invalid llm.depth value: {value}. Must be between 1 and 4."
+		)
+	return value

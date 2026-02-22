@@ -3,9 +3,11 @@ import argparse
 import glob
 import json
 import os
+import random
 import re
 from datetime import datetime
 
+from podlib import depth_orchestrator
 from podlib import outline_llm
 from podlib import pipeline_settings
 from podlib import pipeline_text_utils
@@ -88,6 +90,10 @@ def parse_args() -> argparse.Namespace:
 		type=int,
 		default=None,
 		help="Maximum generation tokens (defaults from settings.yaml).",
+	)
+	parser.add_argument(
+		'-d', '--depth', dest='depth', type=int, default=None,
+		help="LLM generation depth 1-4 (higher = more candidates, better quality).",
 	)
 	parser.add_argument(
 		'--skip-narration',
@@ -494,6 +500,67 @@ def build_podcast_trim_prompt(
 
 
 #============================================
+def _referee_podcast(
+	client,
+	draft_a: str,
+	draft_b: str,
+	max_tokens: int,
+) -> str:
+	"""
+	Run referee comparison between two podcast script draft texts.
+	"""
+	# randomize label order to avoid positional bias
+	labels = [("A", "B"), ("B", "A")]
+	label_a, label_b = random.choice(labels)
+	if label_a == "B":
+		draft_a, draft_b = draft_b, draft_a
+	template = prompt_loader.load_prompt("depth_referee_podcast.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"label_a": label_a,
+		"label_b": label_b,
+		"draft_a": draft_a,
+		"draft_b": draft_b,
+	})
+	raw = client.generate(
+		prompt=prompt,
+		purpose="podcast referee",
+		max_tokens=max_tokens,
+	).strip()
+	return raw
+
+
+#============================================
+def _polish_podcast(
+	client,
+	drafts: list,
+	depth: int,
+	word_limit: int,
+	max_tokens: int,
+) -> str:
+	"""
+	Run polish pass to merge multiple podcast script drafts into one final script.
+	"""
+	parts = []
+	for i, draft in enumerate(drafts, start=1):
+		parts.append(f"Draft {i}:\n{draft}")
+	drafts_block = "\n\n".join(parts)
+	template = prompt_loader.load_prompt("depth_polish_podcast.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"draft_count": str(len(drafts)),
+		"drafts_block": drafts_block,
+		"target_value": str(word_limit),
+		"target_unit": "words",
+	})
+	polished = client.generate(
+		prompt=prompt,
+		purpose="podcast polish",
+		max_tokens=max_tokens,
+	).strip()
+	polished = outline_llm.strip_xml_wrapper(polished)
+	return polished
+
+
+#============================================
 def generate_podcast_lines_with_llm(
 	blog_text: str,
 	speaker_labels: list[str],
@@ -501,40 +568,78 @@ def generate_podcast_lines_with_llm(
 	model_override: str,
 	max_tokens: int,
 	word_limit: int,
+	depth: int = 1,
+	cache_dir: str = "",
+	continue_mode: bool = True,
 	logger=None,
 ) -> list[tuple[str, str]]:
 	"""
-	Generate podcast lines with single-pass blog summarization.
+	Generate podcast lines with single-pass or depth-pipeline blog summarization.
 	"""
 	client = create_llm_client(transport_name, model_override, quiet=False)
-	# single LLM call to generate multi-speaker script from blog
 	prompt = build_podcast_script_prompt(blog_text, speaker_labels, word_limit)
-	if logger:
-		logger(f"Generating {len(speaker_labels)}-speaker podcast script (target={word_limit} words).")
-	raw_text = client.generate(
-		prompt=prompt,
-		purpose="podcast blog script",
-		max_tokens=max_tokens,
-	).strip()
-	raw_text = outline_llm.strip_xml_wrapper(raw_text)
-	issue = podcast_quality_issue(raw_text)
-	if issue:
-		if logger:
-			logger(f"Script draft flagged ({issue}); retrying once.")
-		retry_prompt = (
-			"Regenerate the podcast script as clean speaker lines.\n"
-			+ f"Target around {word_limit} words.\n"
-			+ "Please do better.\n"
-			+ "Format each line as LABEL: text.\n\n"
-			+ prompt
-		)
+
+	def _generate_one_draft_text() -> str:
+		"""Generate a single podcast script as raw text."""
 		raw_text = client.generate(
-			prompt=retry_prompt,
-			purpose="podcast blog script retry",
+			prompt=prompt,
+			purpose="podcast blog script",
 			max_tokens=max_tokens,
 		).strip()
 		raw_text = outline_llm.strip_xml_wrapper(raw_text)
-	lines = parse_generated_script_lines(raw_text, speaker_labels)
+		issue = podcast_quality_issue(raw_text)
+		if issue:
+			retry_prompt = (
+				"Regenerate the podcast script as clean speaker lines.\n"
+				+ f"Target around {word_limit} words.\n"
+				+ "Please do better.\n"
+				+ "Format each line as LABEL: text.\n\n"
+				+ prompt
+			)
+			raw_text = client.generate(
+				prompt=retry_prompt,
+				purpose="podcast blog script retry",
+				max_tokens=max_tokens,
+			).strip()
+			raw_text = outline_llm.strip_xml_wrapper(raw_text)
+		return raw_text
+
+	# depth 1: original behavior
+	if depth <= 1:
+		if logger:
+			logger(f"Generating {len(speaker_labels)}-speaker podcast script (target={word_limit} words).")
+		raw_text = _generate_one_draft_text()
+		lines = parse_generated_script_lines(raw_text, speaker_labels)
+		lines = ensure_required_speakers(lines, speaker_labels)
+		return trim_lines_to_word_limit(lines, word_limit)
+
+	# depth 2-4: use depth pipeline on text, then parse at the end
+	if logger:
+		logger(
+			f"Generating {len(speaker_labels)}-speaker podcast script "
+			+ f"with depth={depth} (target={word_limit} words)."
+		)
+
+	def _referee(draft_a: str, draft_b: str) -> str:
+		return _referee_podcast(client, draft_a, draft_b, max_tokens)
+
+	def _polish(drafts: list, d: int) -> str:
+		return _polish_podcast(client, drafts, d, word_limit, max_tokens)
+
+	final_text = depth_orchestrator.run_depth_pipeline(
+		generate_draft_fn=_generate_one_draft_text,
+		referee_fn=_referee,
+		polish_fn=_polish,
+		depth=depth,
+		cache_dir=cache_dir,
+		cache_key_prefix="podcast",
+		continue_mode=continue_mode,
+		max_tokens=max_tokens,
+		quality_check_fn=podcast_quality_issue,
+		logger=logger,
+	)
+	# reparse the final text into speaker lines
+	lines = parse_generated_script_lines(final_text, speaker_labels)
 	lines = ensure_required_speakers(lines, speaker_labels)
 	return trim_lines_to_word_limit(lines, word_limit)
 
@@ -596,6 +701,7 @@ def main() -> None:
 	default_max_tokens = pipeline_settings.get_setting_int(
 		settings, ["llm", "max_tokens"], 1200,
 	)
+	default_depth = pipeline_settings.get_llm_depth(settings, 1)
 	input_path = pipeline_settings.resolve_user_scoped_out_path(
 		args.input,
 		DEFAULT_INPUT_PATH,
@@ -619,6 +725,9 @@ def main() -> None:
 		raise RuntimeError("llm max tokens must be >= 1")
 	if args.word_limit < 1:
 		raise RuntimeError("word-limit must be >= 1")
+	# depth: CLI overrides settings.yaml
+	depth = args.depth if args.depth is not None else default_depth
+	depth_orchestrator.validate_depth(depth)
 
 	log_step(
 		"Starting podcast script stage with "
@@ -628,7 +737,8 @@ def main() -> None:
 	log_step(f"Using settings file: {settings_path}")
 	log_step(
 		"Using LLM settings: "
-		+ f"transport={transport_name}, model={model_override or 'auto'}, max_tokens={max_tokens}"
+		+ f"transport={transport_name}, model={model_override or 'auto'}, "
+		+ f"max_tokens={max_tokens}, depth={depth}"
 	)
 	log_step(
 		"LLM execution path for this run: "
@@ -646,6 +756,10 @@ def main() -> None:
 	log_step(f"Speaker labels: {speaker_labels}")
 
 	date_text = local_date_stamp()
+	# build depth cache directory alongside the output
+	depth_cache_dir = os.path.join(
+		os.path.dirname(os.path.abspath(output_path_arg)), "depth_cache",
+	)
 
 	# --- Multi-speaker script ---
 	log_step("Generating multi-speaker podcast script from blog.")
@@ -657,6 +771,9 @@ def main() -> None:
 			model_override=model_override,
 			max_tokens=max_tokens,
 			word_limit=args.word_limit,
+			depth=depth,
+			cache_dir=depth_cache_dir,
+			continue_mode=True,
 			logger=log_step,
 		)
 	except RuntimeError as error:

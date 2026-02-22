@@ -2,9 +2,11 @@
 import argparse
 import json
 import os
+import random
 import re
 from datetime import datetime
 
+from podlib import depth_orchestrator
 from podlib import outline_draft_cache
 from podlib import outline_llm
 from podlib import pipeline_settings
@@ -93,6 +95,10 @@ def parse_args() -> argparse.Namespace:
 		help="Disable per-repo blog draft cache reuse.",
 	)
 	parser.set_defaults(continue_mode=True)
+	parser.add_argument(
+		'-d', '--depth', dest='depth', type=int, default=None,
+		help="LLM generation depth 1-4 (higher = more candidates, better quality).",
+	)
 	args = parser.parse_args()
 	return args
 
@@ -422,6 +428,67 @@ def enforce_blog_word_band(
 
 
 #============================================
+def _referee_blog(
+	client,
+	draft_a: str,
+	draft_b: str,
+	max_tokens: int,
+) -> str:
+	"""
+	Run referee comparison between two blog post draft candidates.
+	"""
+	labels = [("A", "B"), ("B", "A")]
+	label_a, label_b = random.choice(labels)
+	if label_a == "B":
+		draft_a, draft_b = draft_b, draft_a
+	template = prompt_loader.load_prompt("depth_referee_blog.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"label_a": label_a,
+		"label_b": label_b,
+		"draft_a": draft_a,
+		"draft_b": draft_b,
+	})
+	raw = client.generate(
+		prompt=prompt,
+		purpose="blog referee",
+		max_tokens=max_tokens,
+	).strip()
+	return raw
+
+
+#============================================
+def _polish_blog(
+	client,
+	drafts: list,
+	depth: int,
+	word_limit: int,
+	max_tokens: int,
+) -> str:
+	"""
+	Run polish pass to merge multiple blog drafts into one final post.
+	"""
+	parts = []
+	for i, draft in enumerate(drafts, start=1):
+		parts.append(f"Draft {i}:\n{draft}")
+	drafts_block = "\n\n".join(parts)
+	template = prompt_loader.load_prompt("depth_polish_blog.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"draft_count": str(len(drafts)),
+		"drafts_block": drafts_block,
+		"target_value": str(word_limit),
+		"target_unit": "words",
+	})
+	polished = client.generate(
+		prompt=prompt,
+		purpose="blog polish",
+		max_tokens=max_tokens,
+	).strip()
+	polished = normalize_markdown_blog(polished)
+	polished = outline_llm.strip_xml_wrapper(polished)
+	return polished
+
+
+#============================================
 def generate_blog_markdown_with_llm(
 	outline: dict,
 	transport_name: str,
@@ -430,6 +497,8 @@ def generate_blog_markdown_with_llm(
 	word_limit: int,
 	continue_mode: bool,
 	repo_draft_cache_dir: str,
+	depth: int = 1,
+	depth_cache_dir: str = "",
 	logger=None,
 ) -> str:
 	"""
@@ -708,6 +777,7 @@ def main() -> None:
 	default_transport = pipeline_settings.get_enabled_llm_transport(settings)
 	default_model = pipeline_settings.get_llm_provider_model(settings, default_transport)
 	default_max_tokens = pipeline_settings.get_setting_int(settings, ["llm", "max_tokens"], 1200)
+	default_depth = pipeline_settings.get_llm_depth(settings, 1)
 	input_path = pipeline_settings.resolve_user_scoped_out_path(
 		args.input,
 		DEFAULT_INPUT_PATH,
@@ -734,6 +804,9 @@ def main() -> None:
 		raise RuntimeError("llm max tokens must be >= 1")
 	if args.word_limit < 1:
 		raise RuntimeError("word-limit must be >= 1")
+	# depth: CLI overrides settings.yaml
+	depth = args.depth if args.depth is not None else default_depth
+	depth_orchestrator.validate_depth(depth)
 
 	log_step(
 		"Starting blog stage with "
@@ -743,7 +816,8 @@ def main() -> None:
 	log_step(f"Using settings file: {settings_path}")
 	log_step(
 		"Using LLM settings: "
-		+ f"transport={transport_name}, model={model_override or 'auto'}, max_tokens={max_tokens}"
+		+ f"transport={transport_name}, model={model_override or 'auto'}, "
+		+ f"max_tokens={max_tokens}, depth={depth}"
 	)
 	log_step(
 		"LLM execution path for this run: "
@@ -759,22 +833,68 @@ def main() -> None:
 		"Repo draft cache: "
 		+ f"dir={os.path.abspath(repo_draft_cache_dir)}, continue={args.continue_mode}"
 	)
+	depth_cache_dir = os.path.join(os.path.abspath(repo_draft_cache_dir), "depth_cache")
 	log_step("Generating Markdown blog post with incremental drafts and final assembly pass.")
-	try:
-		markdown = generate_blog_markdown_with_llm(
-			outline,
-			transport_name=transport_name,
-			model_override=model_override,
-			max_tokens=max_tokens,
-			word_limit=args.word_limit,
-			continue_mode=args.continue_mode,
-			repo_draft_cache_dir=os.path.abspath(repo_draft_cache_dir),
-			logger=log_step,
-		)
-	except RuntimeError as error:
-		log_step(f"Blog generation failed: {error}")
-		log_step("No blog file written.")
-		return
+	if depth <= 1:
+		# depth 1: original single-pass behavior
+		try:
+			markdown = generate_blog_markdown_with_llm(
+				outline,
+				transport_name=transport_name,
+				model_override=model_override,
+				max_tokens=max_tokens,
+				word_limit=args.word_limit,
+				continue_mode=args.continue_mode,
+				repo_draft_cache_dir=os.path.abspath(repo_draft_cache_dir),
+				logger=log_step,
+			)
+		except RuntimeError as error:
+			log_step(f"Blog generation failed: {error}")
+			log_step("No blog file written.")
+			return
+	else:
+		# depth 2-4: run the entire blog flow N times via depth pipeline
+		log_step(f"Using depth={depth} pipeline for blog generation.")
+		client = create_llm_client(transport_name, model_override, quiet=False)
+
+		def _generate_one_blog() -> str:
+			"""Run one full blog generation pass."""
+			return generate_blog_markdown_with_llm(
+				outline,
+				transport_name=transport_name,
+				model_override=model_override,
+				max_tokens=max_tokens,
+				word_limit=args.word_limit,
+				continue_mode=args.continue_mode,
+				repo_draft_cache_dir=os.path.abspath(repo_draft_cache_dir),
+				logger=log_step,
+			)
+
+		def _referee(draft_a: str, draft_b: str) -> str:
+			return _referee_blog(client, draft_a, draft_b, max_tokens)
+
+		def _polish(drafts: list, d: int) -> str:
+			return _polish_blog(
+				client, drafts, d, args.word_limit, max_tokens,
+			)
+
+		try:
+			markdown = depth_orchestrator.run_depth_pipeline(
+				generate_draft_fn=_generate_one_blog,
+				referee_fn=_referee,
+				polish_fn=_polish,
+				depth=depth,
+				cache_dir=depth_cache_dir,
+				cache_key_prefix="blog",
+				continue_mode=args.continue_mode,
+				max_tokens=max_tokens,
+				quality_check_fn=blog_quality_issue,
+				logger=log_step,
+			)
+		except RuntimeError as error:
+			log_step(f"Blog depth pipeline failed: {error}")
+			log_step("No blog file written.")
+			return
 	date_text = local_date_stamp()
 	dated_output = date_stamp_output_path(output_path_arg, date_text)
 	output_path = os.path.abspath(dated_output)

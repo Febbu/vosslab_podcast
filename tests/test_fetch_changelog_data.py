@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Unit tests for multi-date changelog parsing in fetch_github_data."""
 
 # Standard Library

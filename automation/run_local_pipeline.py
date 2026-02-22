@@ -79,6 +79,10 @@ def parse_args() -> argparse.Namespace:
 		action="store_true",
 		help="Regenerate all LLM outputs from scratch instead of reusing cached outlines/drafts.",
 	)
+	parser.add_argument(
+		'-d', '--depth', dest='depth', type=int, default=None,
+		help="LLM generation depth 1-4 (higher = more candidates, better quality).",
+	)
 	return parser.parse_args()
 
 
@@ -171,6 +175,10 @@ def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]
 	Build ordered stage command list.
 	"""
 	window_flag = resolve_window_flag(args)
+	# build depth flag list for LLM stages
+	depth_flags = []
+	if args.depth is not None:
+		depth_flags = ["--depth", str(args.depth)]
 	stages = [
 		(
 			"fetch",
@@ -189,7 +197,7 @@ def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]
 				"pipeline/github_data_to_outline.py",
 				"--settings",
 				args.settings,
-			] + (["--no-continue"] if args.no_continue else []),
+			] + (["--no-continue"] if args.no_continue else []) + depth_flags,
 		),
 		(
 			"outline_compilation",
@@ -210,7 +218,7 @@ def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]
 				args.settings,
 				"--word-limit",
 				"500",
-			] + (["--no-continue"] if args.no_continue else []),
+			] + (["--no-continue"] if args.no_continue else []) + depth_flags,
 		),
 		(
 			"bluesky",
@@ -219,7 +227,7 @@ def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]
 				"pipeline/blog_to_bluesky_post.py",
 				"--settings",
 				args.settings,
-			],
+			] + depth_flags,
 		),
 		(
 			"podcast_script",
@@ -228,7 +236,7 @@ def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]
 				"pipeline/blog_to_podcast_script.py",
 				"--settings",
 				args.settings,
-			],
+			] + depth_flags,
 		),
 		(
 			"podcast_audio",

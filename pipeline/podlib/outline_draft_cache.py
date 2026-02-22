@@ -52,6 +52,39 @@ def build_cache_path(cache_dir: str, repo_full_name: str, run_fingerprint: str) 
 
 
 #============================================
+def compute_depth_draft_fingerprint(
+	outline: dict,
+	stage_name: str,
+	target_value: int,
+	depth: int,
+	draft_index: int,
+	extra: dict | None = None,
+) -> str:
+	"""
+	Compute depth-aware cache key for one draft within a depth run.
+	"""
+	combined_extra = dict(extra or {})
+	combined_extra["depth"] = depth
+	combined_extra["draft_index"] = draft_index
+	return compute_run_fingerprint(outline, stage_name, target_value, combined_extra)
+
+
+#============================================
+def build_depth_cache_path(
+	cache_dir: str,
+	stage_name: str,
+	depth: int,
+	draft_index: int,
+	fingerprint: str,
+) -> str:
+	"""
+	Build cache path for one depth draft file.
+	"""
+	filename = f"{stage_name}_d{depth}_i{draft_index}_{fingerprint}.json"
+	return os.path.join(cache_dir, filename)
+
+
+#============================================
 def load_cached_draft(path: str) -> dict | None:
 	"""
 	Load one cached draft payload from JSON path.

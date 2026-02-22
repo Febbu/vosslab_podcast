@@ -2,6 +2,8 @@
 
 Generates a weekly multi-channel content package from GitHub activity.
 
+Design philosophy: [docs/DESIGN_PHILOSOPHY.md](docs/DESIGN_PHILOSOPHY.md)
+
 Directory layout contract: [docs/OUT_DIRECTORY_ORGANIZATION_SPEC.md](docs/OUT_DIRECTORY_ORGANIZATION_SPEC.md)
 
 ## Process flow

@@ -1165,3 +1165,29 @@ What was tested
 
 Next actions
 1. Optionally refresh README examples that still use legacy audio filenames such as `episode.wav` or `episode_siri.aiff`.
+
+Session Update: 2026-02-22 (Depth system: multi-draft LLM quality pipeline)
+
+What changed
+- Created `docs/DESIGN_PHILOSOPHY.md` documenting local-model-patience-caching-depth philosophy.
+- Created `pipeline/podlib/depth_orchestrator.py` with `run_depth_pipeline()`, `validate_depth()`, `compute_draft_count()`, `needs_referee()`, `needs_polish()`, `build_referee_brackets()`, `parse_referee_winner()`.
+- Created `tests/test_depth_orchestrator.py` with 12 pure-logic unit tests.
+- Created 8 prompt templates in `pipeline/prompts/`: `depth_referee_{blog,outline,bluesky,podcast}.txt` and `depth_polish_{blog,outline,bluesky,podcast}.txt`.
+- Extended `pipeline/podlib/outline_draft_cache.py` with `compute_depth_draft_fingerprint()` and `build_depth_cache_path()` for depth-aware caching.
+- Added `get_llm_depth()` to `pipeline/podlib/pipeline_settings.py`; added `llm.depth: 1` to `settings.yaml`.
+- Integrated `--depth` / `-d` flag into all 4 LLM scripts: `blog_to_bluesky_post.py`, `blog_to_podcast_script.py`, `github_data_to_outline.py`, `outline_to_blog_post.py`.
+- Each script has `_referee_*()` and `_polish_*()` helpers with randomized label order.
+- Updated `automation/run_local_pipeline.py` with `--depth` passthrough to outline, blog, bluesky, and podcast_script stages.
+- Updated `README.md` with link to `docs/DESIGN_PHILOSOPHY.md`.
+- Updated `docs/CHANGELOG.md` with all depth system entries.
+
+What was tested
+- `source source_me.sh && pytest tests/test_depth_orchestrator.py` (12 passed)
+- `source source_me.sh && pytest tests/test_pyflakes_code_lint.py` (62 passed)
+- `source source_me.sh && pytest tests/test_ascii_compliance.py` (passed)
+- `source source_me.sh && pytest tests/` (448 passed, 1 failed pre-existing in test_fetch_changelog_data.py)
+
+Next actions
+1. Smoke test with `--depth 2` on a real run to verify multi-draft generation and polish.
+2. Tune referee/polish prompts based on output quality.
+3. Consider per-stage depth overrides in settings.yaml if needed later.

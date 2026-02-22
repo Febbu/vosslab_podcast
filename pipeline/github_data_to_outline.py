@@ -2,13 +2,15 @@
 import argparse
 import glob
 import json
+import math
 import os
+import random
 import re
 import sys
-import math
 from datetime import datetime
 from datetime import timezone
 
+from podlib import depth_orchestrator
 from podlib import pipeline_settings
 from podlib import outline_llm
 
@@ -113,6 +115,10 @@ def parse_args() -> argparse.Namespace:
 		type=int,
 		default=None,
 		help="Optional cap for number of repos summarized (defaults from settings.yaml).",
+	)
+	parser.add_argument(
+		'-d', '--depth', dest='depth', type=int, default=None,
+		help="LLM generation depth 1-4 (higher = more candidates, better quality).",
 	)
 	args = parser.parse_args()
 	return args
@@ -365,6 +371,82 @@ def build_global_llm_prompt(
 
 
 #============================================
+def outline_quality_issue(text: str) -> str:
+	"""
+	Return a validation issue string when outline text is unusable.
+	"""
+	clean = (text or "").strip()
+	if not clean:
+		return "empty output"
+	lower = clean.lower()
+	if ("error_code" in lower) or ("generationerror" in lower):
+		return "llm returned error payload"
+	if clean.startswith("{") and clean.endswith("}"):
+		return "llm returned structured error/object text"
+	return ""
+
+
+#============================================
+def _referee_outline(
+	client,
+	draft_a: str,
+	draft_b: str,
+	max_tokens: int,
+) -> str:
+	"""
+	Run referee comparison between two outline draft texts.
+	"""
+	labels = [("A", "B"), ("B", "A")]
+	label_a, label_b = random.choice(labels)
+	if label_a == "B":
+		draft_a, draft_b = draft_b, draft_a
+	template = prompt_loader.load_prompt("depth_referee_outline.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"label_a": label_a,
+		"label_b": label_b,
+		"draft_a": draft_a,
+		"draft_b": draft_b,
+	})
+	raw = client.generate(
+		prompt=prompt,
+		purpose="outline referee",
+		max_tokens=max_tokens,
+	).strip()
+	return raw
+
+
+#============================================
+def _polish_outline(
+	client,
+	drafts: list,
+	depth: int,
+	target_words: int,
+	max_tokens: int,
+) -> str:
+	"""
+	Run polish pass to merge multiple outline drafts into one final outline.
+	"""
+	parts = []
+	for i, draft in enumerate(drafts, start=1):
+		parts.append(f"Draft {i}:\n{draft}")
+	drafts_block = "\n\n".join(parts)
+	template = prompt_loader.load_prompt("depth_polish_outline.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"draft_count": str(len(drafts)),
+		"drafts_block": drafts_block,
+		"target_value": str(target_words),
+		"target_unit": "words",
+	})
+	polished = client.generate(
+		prompt=prompt,
+		purpose="outline polish",
+		max_tokens=max_tokens,
+	).strip()
+	polished = outline_llm.strip_xml_wrapper(polished)
+	return polished
+
+
+#============================================
 def is_context_window_error(error: Exception) -> bool:
 	"""
 	Detect model context-window failures from wrapped transport errors.
@@ -574,6 +656,7 @@ def summarize_outline_with_llm(
 	repo_limit: int,
 	repo_shards_dir: str = "out/outline_repos",
 	continue_mode: bool = True,
+	depth: int = 1,
 ) -> dict:
 	"""
 	Generate repo and global summaries with local-llm-wrapper.
@@ -701,25 +784,71 @@ def summarize_outline_with_llm(
 	log_step(
 		"Generating global compilation outline from repo summaries: "
 		+ f"input_chars={total_outline_chars}, input_words={total_outline_words}, "
-		+ f"target={global_target} words"
+		+ f"target={global_target} words, depth={depth}"
 	)
 	if client is None:
 		client = create_llm_client(transport_name, model_override)
-	global_outline = generate_global_outline_with_retry(
-		client,
-		outline,
-		repo_summaries,
-		max_tokens=max_tokens,
-		target_words=global_target,
-	)
-	global_outline = enforce_global_outline_word_band(
-		client,
-		outline,
-		repo_summaries,
-		global_outline,
-		max_tokens=max_tokens,
-		target_words=global_target,
-	)
+
+	if depth <= 1:
+		# depth 1: original single-pass behavior
+		global_outline = generate_global_outline_with_retry(
+			client,
+			outline,
+			repo_summaries,
+			max_tokens=max_tokens,
+			target_words=global_target,
+		)
+		global_outline = enforce_global_outline_word_band(
+			client,
+			outline,
+			repo_summaries,
+			global_outline,
+			max_tokens=max_tokens,
+			target_words=global_target,
+		)
+	else:
+		# depth 2-4: use depth pipeline for global outline
+		def _generate_one_outline() -> str:
+			"""Generate one global outline draft."""
+			result = generate_global_outline_with_retry(
+				client,
+				outline,
+				repo_summaries,
+				max_tokens=max_tokens,
+				target_words=global_target,
+			)
+			return enforce_global_outline_word_band(
+				client,
+				outline,
+				repo_summaries,
+				result,
+				max_tokens=max_tokens,
+				target_words=global_target,
+			)
+
+		def _referee(draft_a: str, draft_b: str) -> str:
+			return _referee_outline(client, draft_a, draft_b, max_tokens)
+
+		def _polish(drafts: list, d: int) -> str:
+			return _polish_outline(
+				client, drafts, d, global_target, max_tokens,
+			)
+
+		depth_cache_dir = os.path.join(
+			os.path.abspath(repo_shards_dir), "depth_cache",
+		)
+		global_outline = depth_orchestrator.run_depth_pipeline(
+			generate_draft_fn=_generate_one_outline,
+			referee_fn=_referee,
+			polish_fn=_polish,
+			depth=depth,
+			cache_dir=depth_cache_dir,
+			cache_key_prefix="outline_global",
+			continue_mode=continue_mode,
+			max_tokens=max_tokens,
+			quality_check_fn=outline_quality_issue,
+			logger=log_step,
+		)
 	outline["llm_global_outline"] = global_outline
 	outline["llm_repo_summaries_count"] = len(selected_repos)
 	outline["llm_cached_repo_outline_count"] = cache_hits
@@ -1175,6 +1304,7 @@ def main() -> None:
 	default_model = pipeline_settings.get_llm_provider_model(settings, default_transport)
 	default_max_tokens = pipeline_settings.get_setting_int(settings, ["llm", "max_tokens"], 1200)
 	default_repo_limit = pipeline_settings.get_setting_int(settings, ["llm", "repo_limit"], 0)
+	default_depth = pipeline_settings.get_llm_depth(settings, 1)
 	input_path = pipeline_settings.resolve_user_scoped_out_path(
 		args.input,
 		DEFAULT_INPUT_PATH,
@@ -1219,12 +1349,15 @@ def main() -> None:
 		raise RuntimeError("llm max tokens must be >= 1")
 	if repo_limit < 0:
 		raise RuntimeError("llm repo limit must be >= 0")
+	# depth: CLI overrides settings.yaml
+	depth = args.depth if args.depth is not None else default_depth
+	depth_orchestrator.validate_depth(depth)
 
 	log_step(f"Using settings file: {settings_path}")
 	log_step(
 		"Using LLM settings: "
 		+ f"transport={transport_name}, model={model_override or 'auto'}, "
-		+ f"max_tokens={max_tokens}, repo_limit={repo_limit}"
+		+ f"max_tokens={max_tokens}, repo_limit={repo_limit}, depth={depth}"
 	)
 	log_step(f"Parsing input JSONL: {os.path.abspath(input_path)}")
 	outline = parse_jsonl_to_outline(input_path)
@@ -1242,6 +1375,7 @@ def main() -> None:
 		repo_limit=repo_limit,
 		repo_shards_dir=repo_shards_dir,
 		continue_mode=args.continue_mode,
+		depth=depth,
 	)
 	write_outline_outputs(
 		outline,

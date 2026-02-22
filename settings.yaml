@@ -6,6 +6,7 @@ github:
 llm:
   max_tokens: 1200
   repo_limit: 0
+  depth: 1
   providers:
     apple:
       enabled: true
