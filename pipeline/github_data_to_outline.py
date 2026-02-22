@@ -171,6 +171,39 @@ def resolve_latest_fetch_input(input_path: str) -> str:
 
 
 #============================================
+def _truncate_changelog_entries(
+	entries: list[dict],
+	max_entries: int = 3,
+	total_char_budget: int = 8000,
+) -> list[dict]:
+	"""
+	Limit changelog entries for LLM context to avoid blowing the context window.
+
+	Keeps at most max_entries entries within a shared total_char_budget.
+	Entries are included in order until the budget is exhausted; the entry
+	that crosses the budget is truncated at the boundary.
+	Noise stripping (markdown links, file paths) is already done at fetch
+	time by strip_changelog_noise() in fetch_github_data.py.
+	"""
+	result: list[dict] = []
+	chars_used = 0
+	for entry in entries[:max_entries]:
+		text = entry.get("entry_text", "")
+		remaining = total_char_budget - chars_used
+		if remaining <= 0:
+			break
+		if len(text) > remaining:
+			text = text[:remaining] + "..."
+		chars_used += len(text)
+		result.append({
+			"heading": entry.get("heading", ""),
+			"entry_text": text,
+			"date": entry.get("date", ""),
+		})
+	return result
+
+
+#============================================
 def build_repo_context(bucket: dict) -> dict:
 	"""
 	Build compact repo context for LLM prompts.
@@ -188,6 +221,9 @@ def build_repo_context(bucket: dict) -> dict:
 		"commit_messages": list(bucket.get("commit_messages", []))[:30],
 		"issue_titles": list(bucket.get("issue_titles", []))[:30],
 		"pull_request_titles": list(bucket.get("pull_request_titles", []))[:30],
+		"changelog_entries": _truncate_changelog_entries(
+			bucket.get("changelog_entries", []),
+		),
 	}
 	return context
 
@@ -268,11 +304,14 @@ def compute_repo_word_target(bucket: dict, ceiling: int) -> int:
 		Scaled word target clamped between 100 and ceiling.
 	"""
 	CHARS_PER_WORD = 5
-	# sum total input characters from commit messages, issue titles, PR titles
+	# sum total input characters from commit messages, issue titles, PR titles, changelog
+	# use truncated changelog to match what actually goes into the LLM context
 	msg_chars = sum(len(m) for m in bucket.get("commit_messages", []))
 	issue_chars = sum(len(t) for t in bucket.get("issue_titles", []))
 	pr_chars = sum(len(t) for t in bucket.get("pull_request_titles", []))
-	input_chars = msg_chars + issue_chars + pr_chars
+	truncated_entries = _truncate_changelog_entries(bucket.get("changelog_entries", []))
+	changelog_chars = sum(len(e.get("entry_text", "")) for e in truncated_entries)
+	input_chars = msg_chars + issue_chars + pr_chars + changelog_chars
 	# estimate input word count from character total
 	input_words = input_chars // CHARS_PER_WORD
 	# for input under 1500 words, target 50% of input words
@@ -573,14 +612,18 @@ def summarize_outline_with_llm(
 		repo_name = bucket.get("repo_full_name", "")
 		# scale word target per repo based on input data richness
 		scaled_target = compute_repo_word_target(bucket, repo_target_words)
-		# log input stats driving the scaled target
+		# log input stats driving the scaled target (uses truncated changelog)
 		msg_chars = sum(len(m) for m in bucket.get("commit_messages", []))
 		issue_chars = sum(len(t) for t in bucket.get("issue_titles", []))
 		pr_chars = sum(len(t) for t in bucket.get("pull_request_titles", []))
-		input_chars = msg_chars + issue_chars + pr_chars
+		truncated = _truncate_changelog_entries(bucket.get("changelog_entries", []))
+		changelog_chars = sum(len(e.get("entry_text", "")) for e in truncated)
+		commit_chars = msg_chars + issue_chars + pr_chars
+		input_chars = commit_chars + changelog_chars
 		log_step(
 			f"Repo {rank}/{len(selected_repos)} {repo_name}: "
-			+ f"input_chars={input_chars}, est_words={input_chars // 5}, "
+			+ f"commit_chars={commit_chars}, changelog_chars={changelog_chars}, "
+			+ f"total_input_chars={input_chars}, total_input_words={input_chars // 5}, "
 			+ f"scaled_target={scaled_target}, ceiling={repo_target_words}"
 		)
 		repo_outline = cached_repo_outlines.get(repo_name, "")
@@ -705,6 +748,7 @@ def ensure_repo_bucket(repo_map: dict[str, dict], repo_full_name: str, repo_name
 			"commit_messages": [],
 			"issue_titles": [],
 			"pull_request_titles": [],
+			"changelog_entries": [],
 			"latest_event_time": "",
 		}
 	return repo_map[repo_full_name]
@@ -744,6 +788,7 @@ def parse_jsonl_to_outline(input_path: str) -> dict:
 		"commit_records": 0,
 		"issue_records": 0,
 		"pull_request_records": 0,
+		"changelog_records": 0,
 	}
 
 	with open(input_path, "r", encoding="utf-8") as handle:
@@ -810,6 +855,19 @@ def parse_jsonl_to_outline(input_path: str) -> dict:
 					bucket["pull_request_titles"].append(title)
 				continue
 
+			if record_type == "repo_changelog":
+				totals["changelog_records"] += 1
+				heading = (record.get("latest_heading") or "").strip()
+				entry_text = (record.get("latest_entry") or "").strip()
+				entry_date = (record.get("event_time") or "").strip()
+				if entry_text:
+					bucket["changelog_entries"].append({
+						"heading": heading,
+						"entry_text": entry_text,
+						"date": entry_date,
+					})
+				continue
+
 	for repo_full_name in repo_map:
 		bucket = repo_map[repo_full_name]
 		bucket["total_activity"] = (
@@ -850,6 +908,7 @@ def parse_jsonl_to_outline(input_path: str) -> dict:
 			"commit_records": totals["commit_records"],
 			"issue_records": totals["issue_records"],
 			"pull_request_records": totals["pull_request_records"],
+			"changelog_records": totals["changelog_records"],
 			"run_metadata_records": run_metadata_count,
 			"run_summary_records": run_summary_count,
 		},

@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 from datetime import datetime
 
 import numpy
@@ -14,7 +15,8 @@ from podlib import pipeline_settings
 
 
 DEFAULT_SCRIPT_PATH = "out/podcast_script.txt"
-DEFAULT_OUTPUT_PATH = "out/episode.mp3"
+DEFAULT_OUTPUT_PATH = "out/podcast_audio.mp3"
+DATE_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 #============================================
@@ -113,6 +115,34 @@ def silence(seconds: float, sample_rate: int) -> numpy.ndarray:
 
 
 #============================================
+def local_date_stamp() -> str:
+	"""
+	Return local-date stamp for filenames.
+	"""
+	return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+#============================================
+def date_stamp_output_path(output_path: str, date_text: str) -> str:
+	"""
+	Ensure output filename includes one local-date stamp.
+	"""
+	candidate = (output_path or "").strip() or DEFAULT_OUTPUT_PATH
+	candidate = candidate.replace("{date}", date_text)
+	directory, filename = os.path.split(candidate)
+	if not filename:
+		filename = os.path.basename(DEFAULT_OUTPUT_PATH)
+	stem, extension = os.path.splitext(filename)
+	if not extension:
+		extension = ".mp3"
+	if DATE_STAMP_RE.search(filename):
+		dated_filename = filename
+	else:
+		dated_filename = f"{stem}-{date_text}{extension}"
+	return os.path.join(directory, dated_filename)
+
+
+#============================================
 def derive_config_voice(
 	label: str,
 	config: dict,
@@ -181,11 +211,14 @@ def main() -> None:
 		DEFAULT_OUTPUT_PATH,
 		user,
 	)
+	date_text = local_date_stamp()
+	dated_output = date_stamp_output_path(output_arg, date_text)
 	log_step(
 		"Starting audio stage with "
-		+ f"script={os.path.abspath(script_arg)}, output={os.path.abspath(output_arg)}, "
+		+ f"script={os.path.abspath(script_arg)}, output={os.path.abspath(dated_output)}, "
 		+ f"voices={os.path.abspath(args.voices)}, model_id={args.model_id}"
 	)
+	log_step(f"Using local date stamp for audio filename: {date_text}")
 	script_path = os.path.abspath(script_arg)
 	if not os.path.isfile(script_path):
 		raise FileNotFoundError(f"Missing script file: {script_path}")
@@ -248,7 +281,7 @@ def main() -> None:
 
 	log_step("Concatenating generated segments into final waveform.")
 	audio = numpy.concatenate(segments)
-	output_path = os.path.abspath(output_arg)
+	output_path = os.path.abspath(dated_output)
 	os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
 	# determine if MP3 conversion is needed

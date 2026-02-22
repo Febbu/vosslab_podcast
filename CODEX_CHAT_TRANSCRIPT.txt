@@ -1134,3 +1134,34 @@ What was tested
 
 Next actions
 1. Optionally add a short README usage example for `automation/run_local_pipeline.py --no-api-calls`.
+
+---
+Session Update: 2026-02-22 (Date-stamped podcast audio artifact)
+
+What changed
+- Updated `/Users/vosslab/nsh/vosslab_podcast/pipeline/script_to_audio_say.py` to date-stamp output audio filenames by default using local date (`podcast_audio-YYYY-MM-DD.mp3`).
+- Added local date-stamp helpers in that script and applied them before output path resolution.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/automation/run_local_pipeline.py` artifact detection to look for `podcast_audio-*.mp3`.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/docs/CHANGELOG.md` to record this behavior change.
+
+What was tested
+- `source source_me.sh && pytest -q tests/test_script_to_audio_say.py` (pass: `5 passed`)
+- `source source_me.sh && pytest -q tests/test_content_pipeline_limits.py tests/test_pipeline_settings.py` (pass: `13 passed`)
+
+Next actions
+1. Optionally update README examples that still mention non-dated audio output names.
+
+---
+Session Update: 2026-02-22 (Audio output naming split)
+
+What changed
+- Updated `/Users/vosslab/nsh/vosslab_podcast/pipeline/script_to_audio.py` so default output is date-stamped `podcast_audio-YYYY-MM-DD.mp3`.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/pipeline/script_to_audio_say.py` so default output is date-stamped `narrator_audio-YYYY-MM-DD.mp3`.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/automation/run_local_pipeline.py` artifact list to include both `podcast_audio-*.mp3` and `narrator_audio-*.mp3`.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/docs/CHANGELOG.md` with the audio output naming behavior change.
+
+What was tested
+- `source source_me.sh && pytest tests/` (pass: `425 passed`)
+
+Next actions
+1. Optionally refresh README examples that still use legacy audio filenames such as `episode.wav` or `episode_siri.aiff`.

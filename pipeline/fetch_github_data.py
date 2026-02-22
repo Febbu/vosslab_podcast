@@ -482,6 +482,40 @@ def parse_latest_changelog_entry(changelog_text: str) -> tuple[str, str, str]:
 
 
 #============================================
+def parse_all_changelog_entries(changelog_text: str) -> list[tuple[str, str, str]]:
+	"""
+	Extract all dated changelog sections as (heading, date, entry_text) tuples.
+
+	Returns:
+		List of (heading_value, heading_date, entry_text) for each ## YYYY-MM-DD section.
+	"""
+	if not changelog_text.strip():
+		return []
+	lines = changelog_text.splitlines()
+	# find all heading indices
+	headings: list[tuple[int, str, str]] = []
+	for index, line in enumerate(lines):
+		match = DATE_HEADING_RE.match(line.strip())
+		if match:
+			headings.append((index, line.strip(), match.group(1)))
+	if not headings:
+		return []
+	results: list[tuple[str, str, str]] = []
+	for pos, (start_index, heading_value, heading_date) in enumerate(headings):
+		# collect lines from heading to next heading or EOF
+		if pos + 1 < len(headings):
+			end_index = headings[pos + 1][0]
+		else:
+			end_index = len(lines)
+		entry_lines = [heading_value]
+		for line in lines[start_index + 1:end_index]:
+			entry_lines.append(line.rstrip())
+		entry_text = "\n".join(entry_lines).strip()
+		results.append((heading_value, heading_date, entry_text))
+	return results
+
+
+#============================================
 def fetch_repo_changelog_content(
 	client: github_client.GitHubClient,
 	repo_full_name: str,
@@ -518,7 +552,7 @@ def build_changelog_record(
 	heading, heading_date, entry_text = parse_latest_changelog_entry(changelog_text)
 	event_time = window_end.isoformat()
 	if heading_date:
-		event_time = f"{heading_date}T00:00:00+00:00"
+		event_time = f"{heading_date}T12:00:00+00:00"
 	record = {
 		"record_type": "repo_changelog",
 		"user": user,
@@ -531,9 +565,112 @@ def build_changelog_record(
 		"sha": changelog_info.get("sha") or "",
 		"size": changelog_info.get("size") or 0,
 		"latest_heading": heading,
-		"latest_entry": entry_text,
+		"latest_entry": strip_changelog_noise(entry_text),
 	}
 	return record
+
+
+# pattern for markdown links: [link text](url) -> link text
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+# pattern for backtick-quoted paths containing slashes
+_BACKTICK_PATH_RE = re.compile(r"`([^`]*[/\\][^`]*)`")
+
+
+#============================================
+def strip_changelog_noise(text: str) -> str:
+	"""
+	Remove markdown links and backticked file paths from changelog text.
+
+	Converts '[docs/FILE.md](docs/FILE.md)' to 'docs/FILE.md' and strips
+	backticked paths like '`pipeline/foo.py`' down to 'foo.py' (basename).
+	This typically saves >50% of characters in path-heavy changelog entries.
+	"""
+	# convert markdown links to just the link text
+	text = _MD_LINK_RE.sub(r"\1", text)
+	# replace backticked paths with their basename
+	def basename_replace(match: re.Match) -> str:
+		path = match.group(1)
+		base = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+		return base
+	text = _BACKTICK_PATH_RE.sub(basename_replace, text)
+	# collapse runs of whitespace left behind
+	text = re.sub(r"[ \t]+", " ", text)
+	return text
+
+
+#============================================
+def _window_utc_dates(window_start: datetime, window_end: datetime) -> set[str]:
+	"""
+	Return the set of YYYY-MM-DD UTC calendar dates that the window spans.
+
+	Changelog headings are bare dates (effectively UTC), so this set
+	captures every UTC date the window touches regardless of local timezone.
+	"""
+	start_date = window_start.astimezone(timezone.utc).date()
+	end_date = window_end.astimezone(timezone.utc).date()
+	dates: set[str] = set()
+	current = start_date
+	while current <= end_date:
+		dates.add(current.isoformat())
+		current += timedelta(days=1)
+	return dates
+
+
+#============================================
+def build_changelog_records(
+	user: str,
+	window_start: datetime,
+	window_end: datetime,
+	repo_full_name: str,
+	repo_name: str,
+	changelog_info: dict,
+) -> list[dict]:
+	"""
+	Build changelog records for each dated entry within the active window.
+
+	Parses all dated sections from the changelog and returns one record per
+	section whose UTC date falls within the window.
+
+	Args:
+		user: GitHub username.
+		window_start: Start of the fetch window.
+		window_end: End of the fetch window.
+		repo_full_name: Full repository name (owner/repo).
+		repo_name: Short repository name.
+		changelog_info: Dict with path, sha, size, changelog_text.
+
+	Returns:
+		List of changelog record dicts, one per matching dated entry.
+	"""
+	changelog_text = changelog_info.get("changelog_text") or ""
+	entries = parse_all_changelog_entries(changelog_text)
+	# changelog headings use bare YYYY-MM-DD dates (effectively UTC),
+	# so build the set of UTC calendar dates the window spans instead
+	# of relying on the local-timezone day_keys
+	utc_dates = _window_utc_dates(window_start, window_end)
+	records: list[dict] = []
+	for heading_value, heading_date, entry_text in entries:
+		if heading_date not in utc_dates:
+			continue
+		# use noon UTC so day-key bucketing lands on the correct date
+		# regardless of local timezone offset from the reset hour
+		event_time = f"{heading_date}T12:00:00+00:00"
+		record = {
+			"record_type": "repo_changelog",
+			"user": user,
+			"window_start": window_start.isoformat(),
+			"window_end": window_end.isoformat(),
+			"event_time": event_time,
+			"repo_full_name": repo_full_name,
+			"repo_name": repo_name,
+			"path": changelog_info.get("path") or "docs/CHANGELOG.md",
+			"sha": changelog_info.get("sha") or "",
+			"size": changelog_info.get("size") or 0,
+			"latest_heading": heading_value,
+			"latest_entry": strip_changelog_noise(entry_text),
+		}
+		records.append(record)
+	return records
 
 
 #============================================
@@ -951,7 +1088,7 @@ def main() -> None:
 					log_step(f"Skipped repo: {repo_full_name}")
 					continue
 				if changelog_info:
-					changelog_record = build_changelog_record(
+					changelog_records = build_changelog_records(
 						user,
 						window_start,
 						window_end,
@@ -959,14 +1096,15 @@ def main() -> None:
 						repo_name,
 						changelog_info,
 					)
-					write_jsonl_line(handle, changelog_record)
-					add_record_to_daily_bucket(
-						daily_buckets,
-						changelog_record,
-						fallback_day,
-						reset_tz=day_reset_tz,
-					)
-					record_counts["repo_changelog"] += 1
+					for changelog_record in changelog_records:
+						write_jsonl_line(handle, changelog_record)
+						add_record_to_daily_bucket(
+							daily_buckets,
+							changelog_record,
+							fallback_day,
+							reset_tz=day_reset_tz,
+						)
+						record_counts["repo_changelog"] += 1
 
 		end_record = {
 			"record_type": "run_summary",

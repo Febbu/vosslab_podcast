@@ -350,7 +350,8 @@ def render_artifact_list(
 	bluesky_path = find_latest_match(user_out, "bluesky_post-*.txt")
 	podcast_script_path = find_latest_match(user_out, "podcast_script-*.txt")
 	podcast_narration_path = find_latest_match(user_out, "podcast_narration-*.txt")
-	podcast_audio_path = find_latest_match(user_out, "podcast_audio*.mp3")
+	podcast_audio_path = find_latest_match(user_out, "podcast_audio-*.mp3")
+	narrator_audio_path = find_latest_match(user_out, "narrator_audio-*.mp3")
 
 	log_step(console, "Final artifacts:", style="bold cyan")
 	for label, path in [
@@ -359,6 +360,7 @@ def render_artifact_list(
 		("podcast_script", podcast_script_path),
 		("podcast_narration", podcast_narration_path),
 		("podcast_audio", podcast_audio_path),
+		("narrator_audio", narrator_audio_path),
 	]:
 		if not path:
 			console.print(f"- {label}: (missing)", style="yellow")

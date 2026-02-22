@@ -2,6 +2,7 @@
 import argparse
 import glob
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime
@@ -11,7 +12,8 @@ from podlib import pipeline_settings
 
 
 DEFAULT_SCRIPT_PATH = "out/podcast_narration.txt"
-DEFAULT_OUTPUT_PATH = "out/podcast_audio.mp3"
+DEFAULT_OUTPUT_PATH = "out/narrator_audio.mp3"
+DATE_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 #============================================
@@ -91,6 +93,34 @@ def resolve_latest_script(script_path: str) -> str:
 
 
 #============================================
+def local_date_stamp() -> str:
+	"""
+	Return local-date stamp for filenames.
+	"""
+	return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+#============================================
+def date_stamp_output_path(output_path: str, date_text: str) -> str:
+	"""
+	Ensure output filename includes one local-date stamp.
+	"""
+	candidate = (output_path or "").strip() or DEFAULT_OUTPUT_PATH
+	candidate = candidate.replace("{date}", date_text)
+	directory, filename = os.path.split(candidate)
+	if not filename:
+		filename = os.path.basename(DEFAULT_OUTPUT_PATH)
+	stem, extension = os.path.splitext(filename)
+	if not extension:
+		extension = ".mp3"
+	if DATE_STAMP_RE.search(filename):
+		dated_filename = filename
+	else:
+		dated_filename = f"{stem}-{date_text}{extension}"
+	return os.path.join(directory, dated_filename)
+
+
+#============================================
 def run_say_to_file(
 	narration: str,
 	output_path: str,
@@ -158,12 +188,15 @@ def main() -> None:
 		return
 
 	script_path = os.path.abspath(resolve_latest_script(script_arg))
-	output_path = os.path.abspath(output_arg)
+	date_text = local_date_stamp()
+	dated_output = date_stamp_output_path(output_arg, date_text)
+	output_path = os.path.abspath(dated_output)
 	log_step(
 		"Starting say audio stage with "
 		+ f"script={script_path}, output={output_path}, "
 		+ f"requested_voice={requested_voice or 'system_default'}, rate_wpm={rate_wpm}"
 	)
+	log_step(f"Using local date stamp for audio filename: {date_text}")
 	if not os.path.isfile(script_path):
 		raise FileNotFoundError(f"Missing script input: {script_path}")
 

@@ -5,7 +5,8 @@ Required sections:
 2. Key Workstreams
 3. Notable Commits (cite commit subjects verbatim in parentheses)
 4. Issues and Pull Requests
-5. Summary of what changed (1-2 sentences with concrete anchors)
+5. Changelog Highlights (from docs/CHANGELOG.md if available)
+6. Summary of what changed (1-2 sentences with concrete anchors)
 Do not invent repo names or metrics. Use only provided data.
 If a section has no relevant data, write 'No activity' and move on.
 Do not speculate about risks, priorities, or future work.

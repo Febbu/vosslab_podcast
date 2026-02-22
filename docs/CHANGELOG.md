@@ -1,6 +1,36 @@
 ## 2026-02-22
 
 ### Additions and New Features
+- Added `parse_all_changelog_entries()` to `pipeline/fetch_github_data.py` that extracts all
+  dated changelog sections instead of only the latest one. Each `## YYYY-MM-DD` section is
+  returned as a `(heading, date, entry_text)` tuple.
+- Added `build_changelog_records()` to `pipeline/fetch_github_data.py` that builds one
+  `repo_changelog` JSONL record per dated entry within the active fetch window, filtered by
+  `day_keys`. Records are naturally bucketed into daily JSONL files.
+- `pipeline/github_data_to_outline.py` now consumes `repo_changelog` records in
+  `parse_jsonl_to_outline()`, populating a `changelog_entries` list on each repo bucket and
+  tracking `changelog_records` in totals.
+- `pipeline/prompts/outline_repo.txt` now includes a "Changelog Highlights" section so the LLM
+  incorporates changelog entries when summarizing repo activity.
+- Added `tests/test_fetch_changelog_data.py` with 5 tests covering multi-date parsing,
+  single-date parsing, empty input, window filtering, and no-match edge cases.
+
+### Fixes and Maintenance
+- Fixed changelog record `event_time` to use noon UTC (`T12:00:00+00:00`) instead of midnight
+  so day-key bucketing lands on the correct date regardless of local timezone reset hour offset.
+- `build_changelog_records()` now filters by UTC calendar dates the window spans (via
+  `_window_utc_dates()`) instead of local-timezone `day_keys`, so changelog entries are matched
+  correctly regardless of timezone offset.
+- `strip_changelog_noise()` in `fetch_github_data.py` strips markdown links and backticked file
+  paths from changelog text at JSONL write time. Markdown links become plain text, backticked
+  paths become basenames. This reduces changelog character counts before they enter the cache.
+- `_truncate_changelog_entries()` in `github_data_to_outline.py` caps changelog entries at 3
+  entries and 1500 chars each to prevent context window overflow on local LLMs.
+- `build_repo_context()` now includes `changelog_entries` in the repo context JSON sent to the
+  LLM prompt.
+- Per-repo input stats log now shows `commit_chars`, `changelog_chars`, `total_input_chars`, and
+  `total_input_words` separately.
+
 - Added `render_prompt_with_target()` to `pipeline/prompt_loader.py`. Appends a closing
   "Target N units for this document_name." line to every rendered prompt so the LLM sees the
   length constraint both near the top and as the final line before generating.
@@ -16,6 +46,9 @@
 - All 12 prompt render call sites across `github_data_to_outline.py`, `outline_to_blog_post.py`,
   `blog_to_podcast_script.py`, and `blog_to_bluesky_post.py` switched from `render_prompt()` to
   `render_prompt_with_target()` for consistent closing target reminders.
+- `pipeline/script_to_audio.py` now date-stamps default Qwen output to
+  `podcast_audio-YYYY-MM-DD.mp3`; `pipeline/script_to_audio_say.py` now writes
+  `narrator_audio-YYYY-MM-DD.mp3` by default. Runner artifact list now includes both outputs.
 - Prompts now only show the target number to the LLM. Removed min/max word leaking from
   `pipeline/prompts/blog_expand.txt` and `outline_repo_targeted.txt`.
 - Simplified `outline_repo_targeted.txt`: removed verbose examples and "expand every commit"
