@@ -143,6 +143,34 @@
   and annotates validated `urlopen` calls to satisfy Bandit B310 checks.
 - `tests/test_import_requirements.py` now maps `applefoundationmodels` to
   `apple-foundation-models` via import alias normalization for dependency-policy compliance.
+- `pipeline/outline_to_blog_post.py` now stamps blog output filenames with local date only
+  (`YYYY-MM-DD`) and excludes time values in filenames.
+- `pipeline/outline_to_blog_post.py` now auto-suffixes output filenames with date when no date is
+  present, while preserving pre-dated output names.
+- `README.md` output artifact naming now documents date-stamped Markdown blog filenames.
+- `tests/test_outline_to_blog_post.py` now covers date-stamp filename insertion and no-duplicate
+  behavior.
+- `pipeline/outline_to_blog_post.py` prompt now targets daily narrative blog style and explicitly
+  blocks generic writing-advice/CTA phrasing (for example comment prompts).
+- `pipeline/outline_to_blog_post.py` now excludes `llm_global_outline` from blog context to reduce
+  deterministic outline-like outputs.
+- `pipeline/outline_to_blog_post.py` now performs blog quality validation for structural/errors
+  (H1 presence and error-payload detection), while keeping `--word-limit` as a target rather than
+  a strict minimum requirement.
+- `pipeline/outline_to_blog_post.py` now applies salvage-first Markdown normalization:
+  leading `##` is promoted to `#`, and missing top-level titles get a default H1, so usable LLM
+  output is preserved instead of rejected for format drift.
+- `pipeline/outline_to_blog_post.py` blog generation flow now follows repo-by-repo incremental
+  drafts using `max(100, ceil((2*word_limit)/(N-1)))`, selects the single best repo draft, then
+  runs a final LLM trim pass targeting `word_limit`.
+- `pipeline/outline_to_blog_post.py` progress logs now show stage-level generation steps
+  (repo draft i/N, best-draft selection, final trim), plus configured LLM execution path.
+- `pipeline/outline_to_blog_post.py` now exits cleanly with progress logs when blog generation
+  fails, instead of printing a traceback.
+- `tests/test_outline_to_blog_post.py` now includes coverage ensuring short valid Markdown is still
+  accepted by blog quality checks.
+- `tests/test_outline_to_blog_post.py` now covers H1 salvage behavior for H2-leading and plain-text
+  openings.
 
 ### Validation
 - `python3 -m py_compile fetch_github_data.py outline_github_data.py outline_to_blog_post.py`
@@ -187,19 +215,24 @@
 - `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_pipeline_settings.py tests/test_outline_parser.py tests/test_content_pipeline_limits.py tests/test_fetch_github_data_features.py` (pass: `22 passed`)
 - `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/script_to_audio_say.py tests/test_script_to_audio_say.py`
 - `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_script_to_audio_say.py`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/fetch_github_data.py tests/test_fetch_github_data_features.py'`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_fetch_github_data_features.py'` (pass: `5 passed`)
-- `bash -lc 'source source_me.sh && python3.12 pipeline/fetch_github_data.py --help'`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/github_client.py tests/test_github_client_rate_limit.py'`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_github_client_rate_limit.py tests/test_fetch_github_data_features.py'` (pass: `9 passed`)
-- `bash -lc 'source source_me.sh && python3.12 pipeline/fetch_github_data.py --last-day --max-repos 1 --output out/smoke_github_data.jsonl --daily-cache-dir out/smoke_daily_cache'`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/outline_github_data.py tests/test_outline_parser.py'`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_outline_parser.py'`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/outline_to_blog_post.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'` (pass: `5 passed`)
-- `bash -lc 'source source_me.sh && python3.12 pipeline/outline_to_blog_post.py --help'`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/fetch_github_data.py pipeline/outline_github_data.py pipeline/outline_to_blog_post.py pipeline/outline_to_bluesky_post.py pipeline/outline_to_podcast_script.py pipeline/script_to_audio_say.py tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'` (pass: `19 passed`)
-- `bash -lc 'source source_me.sh && python3.12 pipeline/fetch_github_data.py --help && python3.12 pipeline/outline_to_blog_post.py --help'`
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_bandit_security.py tests/test_import_dot.py tests/test_import_requirements.py tests/test_init_files.py'` (pass: `52 passed`)
-- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/'` (pass: `322 passed`)
+- `python3.12 -m py_compile pipeline/fetch_github_data.py tests/test_fetch_github_data_features.py`
+- `python3.12 -m pytest -q tests/test_fetch_github_data_features.py` (pass: `5 passed`)
+- `python3.12 pipeline/fetch_github_data.py --help`
+- `python3.12 -m py_compile pipeline/github_client.py tests/test_github_client_rate_limit.py`
+- `python3.12 -m pytest -q tests/test_github_client_rate_limit.py tests/test_fetch_github_data_features.py` (pass: `9 passed`)
+- `python3.12 pipeline/fetch_github_data.py --last-day --max-repos 1 --output out/smoke_github_data.jsonl --daily-cache-dir out/smoke_daily_cache`
+- `python3.12 -m py_compile pipeline/outline_github_data.py tests/test_outline_parser.py`
+- `python3.12 -m pytest -q tests/test_outline_parser.py`
+- `python3.12 -m py_compile pipeline/outline_to_blog_post.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py`
+- `python3.12 -m pytest -q tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py` (pass: `5 passed`)
+- `python3.12 pipeline/outline_to_blog_post.py --help`
+- `python3.12 -m py_compile pipeline/fetch_github_data.py pipeline/outline_github_data.py pipeline/outline_to_blog_post.py pipeline/outline_to_bluesky_post.py pipeline/outline_to_podcast_script.py pipeline/script_to_audio_say.py tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py`
+- `python3.12 -m pytest -q tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py` (pass: `19 passed`)
+- `python3.12 pipeline/fetch_github_data.py --help && python3.12 pipeline/outline_to_blog_post.py --help`
+- `python3.12 -m pytest -q tests/test_bandit_security.py tests/test_import_dot.py tests/test_import_requirements.py tests/test_init_files.py` (pass: `52 passed`)
+- `python3.12 -m pytest -q tests/` (pass: `322 passed`)
+- `python3.12 -m py_compile pipeline/outline_to_blog_post.py tests/test_outline_to_blog_post.py`
+- `python3.12 -m pytest -q tests/test_outline_to_blog_post.py tests/test_content_pipeline_limits.py` (pass: `7 passed`)
+- `python3.12 -m pytest -q tests/test_outline_to_blog_post.py tests/test_content_pipeline_limits.py` (pass: `8 passed`)
+- `python3.12 -m py_compile pipeline/outline_to_blog_post.py`
+- `python3.12 pipeline/outline_to_blog_post.py` (clean failure path validated when Apple transport fails)

@@ -744,3 +744,102 @@ Next actions
 1. Keep `local-llm-wrapper` import style absolute to avoid future import-dot regressions.
 2. If transport package re-exports are needed later, move them outside `__init__.py` to keep
    init-file policy clean.
+
+---
+Session Update: 2026-02-22 (Blog Output Naming + Prompt Quality Hardening)
+
+What changed
+- Updated `pipeline/outline_to_blog_post.py` to date-stamp blog output filenames with local date
+  (`YYYY-MM-DD`) while avoiding time stamps in filenames.
+- Added filename handling so:
+  - `out/blog_post.md` becomes `out/blog_post_YYYY-MM-DD.md`,
+  - already-dated filenames are preserved without duplicate suffixing.
+- Tightened blog prompt to steer toward daily human-readable narrative and explicitly avoid generic
+  writing-advice/call-to-action phrasing.
+- Removed `llm_global_outline` from blog prompt context to reduce deterministic outline-like output.
+- Added blog quality validation in generation flow (H1/title presence, minimum word threshold,
+  and LLM error-payload detection) with retry behavior.
+- Added clean error handling in `main()` so failed generation logs concise failure messages and exits
+  without traceback noise.
+- Updated tests in `tests/test_outline_to_blog_post.py` for new prompt constraints and filename
+  date-stamp behavior.
+
+What was tested
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_outline_to_blog_post.py tests/test_content_pipeline_limits.py'` (pass: `8 passed`)
+- `bash -lc 'source source_me.sh && python3.12 -m py_compile pipeline/outline_to_blog_post.py'`
+- `bash -lc 'source source_me.sh && python3.12 pipeline/outline_to_blog_post.py'` (validated clean failure path without traceback when Apple generation fails)
+
+Next actions
+1. For stable local runs, consider enabling Ollama provider in `settings.yaml` if Apple transport
+   intermittently fails on generation.
+2. Optionally externalize blog prompt text into `prompts/` templates in a follow-up.
+
+---
+Session Update: 2026-02-22 (Blog Word Target Softened)
+
+What changed
+- Updated `pipeline/outline_to_blog_post.py` so blog word count is treated strictly as a target.
+- Removed minimum-word hard gating from `blog_quality_issue`; short valid Markdown is no longer
+  rejected during repo-pass/fallback/final synthesis checks.
+- Kept quality checks for structural and error conditions (empty output, model error payload, and
+  missing H1 title).
+- Updated `tests/test_outline_to_blog_post.py` with coverage that short valid Markdown passes
+  quality checks.
+- Updated `docs/CHANGELOG.md` to reflect target-only word behavior.
+
+What was tested
+- `pytest -q tests/test_outline_to_blog_post.py tests/test_content_pipeline_limits.py` (pass:
+  `10 passed`)
+
+Next actions
+1. Run `python3 pipeline/outline_to_blog_post.py` on your latest outline and tune prompt style as
+   needed for more human voice.
+2. If desired, apply the same target-only treatment to podcast-script generation prompts.
+
+---
+Session Update: 2026-02-22 (Salvage-First Blog Markdown Normalization)
+
+What changed
+- Reviewed archived guardrail plan from `automated_radio_disc_jockey` and adopted one tolerance
+  pattern for this repo: salvage usable output before retrying/rejecting for structure.
+- Updated `pipeline/outline_to_blog_post.py` with `normalize_markdown_blog()`:
+  - promotes leading `##` to `#`,
+  - injects default `# Daily Engineering Update` when no H1 exists.
+- Blog generation flow now normalizes repo drafts, fallback output, and final synthesis output
+  before quality checks.
+- `blog_quality_issue` now focuses on unusable/error outputs and no longer blocks solely for
+  missing H1 shape.
+- Added tests in `tests/test_outline_to_blog_post.py` for H1 salvage behavior.
+
+What was tested
+- `pytest -q tests/test_outline_to_blog_post.py tests/test_content_pipeline_limits.py` (pass:
+  `12 passed`)
+
+Next actions
+1. If desired, externalize blog prompts into editable files under a `prompts/` directory next,
+   following the same pattern you referenced.
+
+---
+Session Update: 2026-02-22 (Repo-by-Repo Blog Draft + Final Trim Flow)
+
+What changed
+- Updated `pipeline/outline_to_blog_post.py` generation flow to match requested strategy:
+  1) generate one draft per repo using target
+     `max(100, ceil((2*word_limit)/(N-1)))`,
+  2) pick the single best repo draft,
+  3) run one final LLM call to pare that draft to the target blog length.
+- Added explicit stage logging for repo draft generation, retry/skip decisions, best-draft
+  selection, and final trim pass.
+- Added configured LLM execution-path logging (for example
+  `apple(local foundation models) -> ollama(model=...)`) at run start.
+- Enabled local-llm-wrapper runtime transport logs for this script (`quiet=False`) so each call
+  shows which transport is queried.
+
+What was tested
+- `pytest -q tests/test_outline_to_blog_post.py tests/test_content_pipeline_limits.py` (pass:
+  `12 passed`)
+- `pytest -q tests/` (pass: `329 passed`)
+
+Next actions
+1. Run one local blog generation and confirm logs now clearly distinguish incremental draft passes
+   from the final trim pass.

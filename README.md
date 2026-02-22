@@ -21,7 +21,7 @@ Generates a weekly multi-channel content package from GitHub activity.
 - `out/outline.json` and `out/outline.txt` (summary outline)
 - `out/outline_repos/index.json` (manifest of per-repo outline shards)
 - `out/outline_repos/*.json` and `out/outline_repos/*.txt` (one shard per repo)
-- `out/blog_post.md` (Markdown blog post, target 500 words)
+- `out/blog_post_YYYY-MM-DD.md` (Markdown blog post, date-stamped filename, target 500 words)
 - `out/bluesky_post.txt` (<= 140 characters)
 - `out/podcast_script.txt` (<= 500 words, N speakers)
 - `out/episode.wav` (or equivalent audio output)
