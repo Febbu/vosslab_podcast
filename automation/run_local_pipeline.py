@@ -6,8 +6,13 @@ import subprocess
 import time
 from datetime import datetime
 
-import rich.console
-import rich.table
+try:
+	import rich.console
+	import rich.table
+except ModuleNotFoundError as error:
+	raise RuntimeError(
+		"Missing dependency: rich. Install with: source source_me.sh && pip install -r pip_requirements.txt"
+	) from error
 
 
 #============================================
@@ -97,18 +102,13 @@ def resolve_window_flag(args: argparse.Namespace) -> str:
 
 
 #============================================
-def run_stage_once(repo_root: str, source_script: str, command_text: str) -> None:
+def run_stage_once(repo_root: str, command_args: list[str]) -> None:
 	"""
-	Run one stage command in bash with sourced environment.
+	Run one stage command using the caller's existing environment.
 	"""
-	bash_command = (
-		"set -euo pipefail; "
-		+ f"cd '{repo_root}'; "
-		+ f"source '{source_script}'; "
-		+ command_text
-	)
 	subprocess.run(
-		["bash", "-lc", bash_command],
+		command_args,
+		cwd=repo_root,
 		check=True,
 	)
 
@@ -117,9 +117,8 @@ def run_stage_once(repo_root: str, source_script: str, command_text: str) -> Non
 def run_stage_with_retry(
 	console: rich.console.Console,
 	repo_root: str,
-	source_script: str,
 	stage_name: str,
-	command_text: str,
+	command_args: list[str],
 	max_retries: int,
 	retry_wait_seconds: int,
 ) -> float:
@@ -136,7 +135,7 @@ def run_stage_with_retry(
 			style="cyan",
 		)
 		try:
-			run_stage_once(repo_root, source_script, command_text)
+			run_stage_once(repo_root, command_args)
 			elapsed = time.time() - start
 			log_step(console, f"Completed stage: {stage_name} ({elapsed:.1f}s)", style="green")
 			return elapsed
@@ -159,7 +158,7 @@ def run_stage_with_retry(
 
 
 #============================================
-def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[str, str]]:
+def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[str, list[str]]]:
 	"""
 	Build ordered stage command list.
 	"""
@@ -168,44 +167,79 @@ def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[
 	stages = [
 		(
 			"fetch",
-			"python3 pipeline/fetch_github_data.py "
-			+ f"--settings {args.settings} "
-			+ f"{window_flag} "
-			+ f"--output {fetch_output} "
-			+ "--daily-cache-dir out/daily_cache",
+			[
+				"python3",
+				"pipeline/fetch_github_data.py",
+				"--settings",
+				args.settings,
+				window_flag,
+				"--output",
+				fetch_output,
+				"--daily-cache-dir",
+				"out/daily_cache",
+			],
 		),
 		(
 			"outline",
-			"python3 pipeline/outline_github_data.py "
-			+ f"--settings {args.settings} "
-			+ f"--input {fetch_output} "
-			+ "--outline-json out/outline.json "
-			+ "--outline-txt out/outline.txt",
+			[
+				"python3",
+				"pipeline/outline_github_data.py",
+				"--settings",
+				args.settings,
+				"--input",
+				fetch_output,
+				"--outline-json",
+				"out/outline.json",
+				"--outline-txt",
+				"out/outline.txt",
+			],
 		),
 		(
 			"blog",
-			"python3 pipeline/outline_to_blog_post.py "
-			+ f"--settings {args.settings} "
-			+ "--input out/outline.json "
-			+ "--output out/blog_post.md "
-			+ "--word-limit 500",
+			[
+				"python3",
+				"pipeline/outline_to_blog_post.py",
+				"--settings",
+				args.settings,
+				"--input",
+				"out/outline.json",
+				"--output",
+				"out/blog_post.md",
+				"--word-limit",
+				"500",
+			],
 		),
 		(
 			"bluesky",
-			"python3 pipeline/outline_to_bluesky_post.py "
-			+ f"--settings {args.settings} "
-			+ "--input out/outline.json "
-			+ "--output out/bluesky_post.txt "
-			+ "--char-limit 140",
+			[
+				"python3",
+				"pipeline/outline_to_bluesky_post.py",
+				"--settings",
+				args.settings,
+				"--input",
+				"out/outline.json",
+				"--output",
+				"out/bluesky_post.txt",
+				"--char-limit",
+				"140",
+			],
 		),
 		(
 			"podcast_script",
-			"python3 pipeline/outline_to_podcast_script.py "
-			+ f"--settings {args.settings} "
-			+ "--input out/outline.json "
-			+ "--output out/podcast_script.txt "
-			+ f"--num-speakers {args.num_speakers} "
-			+ "--word-limit 500",
+			[
+				"python3",
+				"pipeline/outline_to_podcast_script.py",
+				"--settings",
+				args.settings,
+				"--input",
+				"out/outline.json",
+				"--output",
+				"out/podcast_script.txt",
+				"--num-speakers",
+				str(args.num_speakers),
+				"--word-limit",
+				"500",
+			],
 		),
 	]
 	return stages
@@ -236,9 +270,12 @@ def main() -> None:
 	args = parse_args()
 	console = rich.console.Console()
 	repo_root = resolve_repo_root()
-	source_script = os.path.join(repo_root, "source_me.sh")
-	if not os.path.isfile(source_script):
-		raise RuntimeError(f"Missing required environment bootstrap script: {source_script}")
+	if not os.environ.get("PYTHONPATH"):
+		log_step(
+			console,
+			"Warning: PYTHONPATH is empty. Run with: source source_me.sh && python3 automation/run_local_pipeline.py",
+			style="yellow",
+		)
 	log_step(console, f"Starting local pipeline run from {repo_root}", style="cyan")
 	log_step(console, f"Using settings file: {os.path.join(repo_root, args.settings)}", style="cyan")
 	log_step(console, f"Window mode: {resolve_window_flag(args)}", style="cyan")
@@ -252,7 +289,6 @@ def main() -> None:
 			elapsed = run_stage_with_retry(
 				console,
 				repo_root,
-				source_script,
 				stage_name,
 				stage_command,
 				args.max_retries,

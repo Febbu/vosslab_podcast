@@ -197,6 +197,25 @@
 - `pipeline/podlib/github_client.py` now applies small request jitter
   (`time.sleep(random.random())`) before GitHub API calls and retries once after 403 responses by
   waiting 10 seconds, to better tolerate transient API throttling.
+- `pipeline/fetch_github_data.py` now skips only the currently rate-limited repo detail stage
+  (commits/issues/changelog) and continues processing subsequent repos, instead of aborting all
+  remaining repo detail fetches.
+- `pipeline/fetch_github_data.py` now caches `list_repos` results for 24 hours under
+  `out/cache/list_repos_<user>.json`, reuses cached repo metadata on cache hit, and refreshes the
+  cache on miss.
+- `pipeline/fetch_github_data.py` now resolves per-repo detail fetch objects via
+  `GitHubClient.get_repo(full_name)` so detail calls still work when repository lists come from
+  cache.
+- `tests/test_fetch_github_data_features.py` now includes repo-list cache round-trip and TTL-expiry
+  coverage.
+- Added `pipeline/podlib/github_cache.py` as an abstract, reusable filesystem cache for GitHub
+  query payloads.
+- `pipeline/podlib/github_client.py` now routes all query methods through cached query paths
+  (`list_repos`, `list_commits`, `list_issues`, `get_file_content`) and tracks API usage counters
+  (`api_call_count`, per-context call counts, cache hits/misses).
+- `pipeline/fetch_github_data.py` now logs GitHub API usage counters at end of run.
+- `pipeline/fetch_github_data.py` now supports stale repo-list cache fallback when fresh list cache
+  is unavailable, so list-rate-limit windows do not block local test runs.
 - `tests/test_outline_to_blog_post.py` now includes coverage ensuring short valid Markdown is still
   accepted by blog quality checks.
 - `tests/test_outline_to_blog_post.py` now covers H1 salvage behavior for H2-leading and plain-text

@@ -3,6 +3,7 @@ import time
 from datetime import datetime
 from datetime import timezone
 
+from podlib import github_cache
 
 #============================================
 class RateLimitError(RuntimeError):
@@ -21,8 +22,17 @@ class GitHubClient:
 		self.log_fn = log_fn
 		self._rate_check_count = 0
 		self._low_remaining_threshold = 5
+		self._max_proactive_sleep_seconds = 10
 		self._retry_wait_seconds = 10
 		self._retry_attempts_on_403 = 1
+		self._api_call_count = 0
+		self._api_calls_by_context: dict[str, int] = {}
+		self._cache_hit_count = 0
+		self._cache_miss_count = 0
+		self.cache = github_cache.GitHubQueryCache(
+			cache_dir="out/cache/github_api",
+			default_ttl_seconds=24 * 60 * 60,
+		)
 		try:
 			from github import Github
 			from github.GithubException import GithubException
@@ -43,6 +53,40 @@ class GitHubClient:
 		"""
 		if self.log_fn is not None:
 			self.log_fn(message)
+
+	#============================================
+	def record_api_call(self, context: str) -> None:
+		"""
+		Track one outbound GitHub API call.
+		"""
+		if not hasattr(self, "_api_call_count"):
+			self._api_call_count = 0
+		if not hasattr(self, "_api_calls_by_context"):
+			self._api_calls_by_context = {}
+		self._api_call_count += 1
+		if context not in self._api_calls_by_context:
+			self._api_calls_by_context[context] = 0
+		self._api_calls_by_context[context] += 1
+
+	#============================================
+	def api_usage_snapshot(self) -> dict:
+		"""
+		Return API/caching counters for reporting.
+		"""
+		if not hasattr(self, "_api_call_count"):
+			self._api_call_count = 0
+		if not hasattr(self, "_api_calls_by_context"):
+			self._api_calls_by_context = {}
+		if not hasattr(self, "_cache_hit_count"):
+			self._cache_hit_count = 0
+		if not hasattr(self, "_cache_miss_count"):
+			self._cache_miss_count = 0
+		return {
+			"api_call_count": self._api_call_count,
+			"api_calls_by_context": dict(self._api_calls_by_context),
+			"cache_hit_count": self._cache_hit_count,
+			"cache_miss_count": self._cache_miss_count,
+		}
 
 	#============================================
 	def normalize_datetime(self, value: datetime) -> datetime:
@@ -71,6 +115,7 @@ class GitHubClient:
 		"""
 		Read core rate-limit remaining/reset across PyGithub versions.
 		"""
+		self.record_api_call("GET /rate_limit")
 		overview = self.client.get_rate_limit()
 		rate_limit = getattr(overview, "core", None)
 		if rate_limit is None:
@@ -107,6 +152,13 @@ class GitHubClient:
 		sleep_seconds = int((reset_time - datetime.now(timezone.utc)).total_seconds()) + 1
 		if sleep_seconds <= 0:
 			return
+		if sleep_seconds > self._max_proactive_sleep_seconds:
+			self.log(
+				"Rate limit is low, but proactive wait exceeds cap "
+				+ f"({sleep_seconds}s > {self._max_proactive_sleep_seconds}s); "
+				+ "skipping proactive sleep and continuing."
+			)
+			return
 		self.log(
 			f"Rate limit is low ({remaining}); sleeping {sleep_seconds}s until reset."
 		)
@@ -129,6 +181,7 @@ class GitHubClient:
 		while True:
 			self.sleep_request_jitter(context)
 			try:
+				self.record_api_call(context)
 				return call_fn()
 			except self._github_exception_class as error:
 				status = getattr(error, "status", None)
@@ -142,6 +195,29 @@ class GitHubClient:
 					time.sleep(wait_seconds)
 					continue
 				self.raise_from_github_error(error, context)
+
+	#============================================
+	def cached_query(
+		self,
+		category: str,
+		query: dict,
+		context: str,
+		call_fn,
+		ttl_seconds: int | None = None,
+	):
+		"""
+		Resolve one query through filesystem cache plus API fallback.
+		"""
+		cached = self.cache.get(category, query, ttl_seconds=ttl_seconds)
+		if cached is not None:
+			self._cache_hit_count += 1
+			self.log(f"GitHub cache hit [{category}]")
+			return cached
+		self._cache_miss_count += 1
+		self.log(f"GitHub cache miss [{category}]")
+		data = self.call_with_retry(context, call_fn)
+		self.cache.set(category, query, data)
+		return data
 
 	#============================================
 	def raise_from_github_error(self, error: Exception, context: str) -> None:
@@ -171,52 +247,124 @@ class GitHubClient:
 		List owner repositories sorted by updated timestamp.
 		"""
 		self.maybe_wait_for_rate_limit("list_repos", force=True)
-		return self.call_with_retry(
+		return self.cached_query(
+			"list_repos",
+			{"user": user, "type": "owner", "sort": "updated", "direction": "desc"},
 			f"GET /users/{user}/repos",
-			lambda: self.client.get_user(user).get_repos(
-				type="owner",
-				sort="updated",
-				direction="desc",
-			),
+			lambda: [
+				getattr(repo_obj, "raw_data", {}) or {}
+				for repo_obj in self.client.get_user(user).get_repos(
+					type="owner",
+					sort="updated",
+					direction="desc",
+				)
+			],
 		)
 
 	#============================================
-	def list_commits(self, repo_obj, since: datetime, until: datetime):
+	def list_commits(self, repo_full_name: str, since: datetime, until: datetime):
 		"""
 		List repository commits inside time window.
 		"""
-		self.maybe_wait_for_rate_limit(f"list_commits {repo_obj.full_name}")
-		return self.call_with_retry(
-			f"GET /repos/{repo_obj.full_name}/commits",
-			lambda: repo_obj.get_commits(since=since, until=until),
+		self.maybe_wait_for_rate_limit(f"list_commits {repo_full_name}")
+		since_iso = self.normalize_datetime(since).isoformat()
+		until_iso = self.normalize_datetime(until).isoformat()
+		return self.cached_query(
+			"list_commits",
+			{
+				"repo_full_name": repo_full_name,
+				"since": since_iso,
+				"until": until_iso,
+			},
+			f"GET /repos/{repo_full_name}/commits",
+			lambda: self._list_commits_live(repo_full_name, since, until),
 		)
 
 	#============================================
-	def list_issues(self, repo_obj, since: datetime):
+	def list_issues(self, repo_full_name: str, since: datetime):
 		"""
 		List repository issues and pull requests updated since window start.
 		"""
-		self.maybe_wait_for_rate_limit(f"list_issues {repo_obj.full_name}")
+		self.maybe_wait_for_rate_limit(f"list_issues {repo_full_name}")
+		since_iso = self.normalize_datetime(since).isoformat()
+		return self.cached_query(
+			"list_issues",
+			{
+				"repo_full_name": repo_full_name,
+				"since": since_iso,
+			},
+			f"GET /repos/{repo_full_name}/issues",
+			lambda: self._list_issues_live(repo_full_name, since),
+		)
+
+	#============================================
+	def get_repo(self, full_name: str):
+		"""
+		Get one repository object by full name.
+		"""
+		self.maybe_wait_for_rate_limit(f"get_repo {full_name}")
 		return self.call_with_retry(
-			f"GET /repos/{repo_obj.full_name}/issues",
-			lambda: repo_obj.get_issues(
+			f"GET /repos/{full_name}",
+			lambda: self.client.get_repo(full_name),
+		)
+
+	#============================================
+	def _list_commits_live(self, repo_full_name: str, since: datetime, until: datetime) -> list[dict]:
+		"""
+		Fetch commit raw payloads from live API.
+		"""
+		repo_obj = self.get_repo(repo_full_name)
+		return [
+			getattr(commit_obj, "raw_data", {}) or {}
+			for commit_obj in repo_obj.get_commits(since=since, until=until)
+		]
+
+	#============================================
+	def _list_issues_live(self, repo_full_name: str, since: datetime) -> list[dict]:
+		"""
+		Fetch issue raw payloads from live API.
+		"""
+		repo_obj = self.get_repo(repo_full_name)
+		return [
+			getattr(issue_obj, "raw_data", {}) or {}
+			for issue_obj in repo_obj.get_issues(
 				state="all",
 				since=since,
 				sort="updated",
 				direction="desc",
-			),
-		)
+			)
+		]
 
 	#============================================
-	def get_file_content(self, repo_obj, path: str, ref: str) -> dict | None:
+	def get_file_content(self, repo_full_name: str, path: str, ref: str) -> dict | None:
 		"""
 		Get one file content payload with metadata.
 		"""
-		self.maybe_wait_for_rate_limit(f"get_file_content {repo_obj.full_name} {path}")
+		self.maybe_wait_for_rate_limit(f"get_file_content {repo_full_name} {path}")
+		query = {
+			"repo_full_name": repo_full_name,
+			"path": path,
+			"ref": ref or "",
+		}
+		return self.cached_query(
+			"get_file_content",
+			query,
+			f"GET /repos/{repo_full_name}/contents/{path}",
+			lambda: self._get_file_content_live(repo_full_name, path, ref),
+			ttl_seconds=24 * 60 * 60,
+		)
+
+	#============================================
+	def _get_file_content_live(self, repo_full_name: str, path: str, ref: str) -> dict | None:
+		"""
+		Fetch one file content payload from live API.
+		"""
+		repo_obj = self.get_repo(repo_full_name)
 		attempt = 0
 		while True:
-			self.sleep_request_jitter(f"GET /repos/{repo_obj.full_name}/contents/{path}")
+			self.sleep_request_jitter(f"GET /repos/{repo_full_name}/contents/{path}")
 			try:
+				self.record_api_call(f"GET /repos/{repo_full_name}/contents/{path}")
 				if ref:
 					content = repo_obj.get_contents(path, ref=ref)
 				else:
@@ -230,7 +378,7 @@ class GitHubClient:
 					attempt += 1
 					wait_seconds = self._retry_wait_seconds
 					self.log(
-						f"Request GET /repos/{repo_obj.full_name}/contents/{path} hit 403; "
+						f"Request GET /repos/{repo_full_name}/contents/{path} hit 403; "
 						+ f"sleeping {wait_seconds}s before retry "
 						+ f"({attempt}/{self._retry_attempts_on_403})."
 					)
@@ -238,7 +386,7 @@ class GitHubClient:
 					continue
 				self.raise_from_github_error(
 					error,
-					f"fetching {path} for {repo_obj.full_name}",
+					f"fetching {path} for {repo_full_name}",
 				)
 		if isinstance(content, list):
 			return None
@@ -252,11 +400,11 @@ class GitHubClient:
 		return result
 
 	#============================================
-	def get_file_text(self, repo_obj, path: str, ref: str) -> str | None:
+	def get_file_text(self, repo_full_name: str, path: str, ref: str) -> str | None:
 		"""
 		Get decoded text for one file path.
 		"""
-		payload = self.get_file_content(repo_obj, path, ref)
+		payload = self.get_file_content(repo_full_name, path, ref)
 		if payload is None:
 			return None
 		return payload["text"]

@@ -13,6 +13,7 @@ from podlib import pipeline_settings
 
 DATE_HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b")
 DATE_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+REPO_LIST_CACHE_TTL_SECONDS = 24 * 60 * 60
 
 
 #============================================
@@ -129,6 +130,76 @@ def date_stamp_output_path(output_path: str, date_text: str) -> str:
 
 
 #============================================
+def repo_list_cache_path(user: str) -> str:
+	"""
+	Build cache path for one user's list_repos payload.
+	"""
+	user_key = re.sub(r"[^a-zA-Z0-9_.-]+", "_", (user or "unknown")).strip("_") or "unknown"
+	return os.path.abspath(os.path.join("out", "cache", f"list_repos_{user_key}.json"))
+
+
+#============================================
+def load_repo_list_cache(
+	user: str,
+	now_utc: datetime,
+	max_age_seconds: int | None = REPO_LIST_CACHE_TTL_SECONDS,
+) -> list[dict]:
+	"""
+	Load cached repos when cache age is within max age.
+	"""
+	cache_path = repo_list_cache_path(user)
+	if not os.path.isfile(cache_path):
+		return []
+	try:
+		with open(cache_path, "r", encoding="utf-8") as handle:
+			payload = json.load(handle)
+	except Exception:
+		return []
+	if not isinstance(payload, dict):
+		return []
+	fetched_at_text = str(payload.get("fetched_at", "")).strip()
+	if not fetched_at_text:
+		return []
+	try:
+		fetched_at = parse_iso(fetched_at_text)
+	except Exception:
+		return []
+	age_seconds = (now_utc - fetched_at).total_seconds()
+	if age_seconds < 0:
+		return []
+	if (max_age_seconds is not None) and (age_seconds > max_age_seconds):
+		return []
+	repos = payload.get("repos")
+	if not isinstance(repos, list):
+		return []
+	valid_repos = []
+	for item in repos:
+		if isinstance(item, dict):
+			valid_repos.append(item)
+	return valid_repos
+
+
+#============================================
+def save_repo_list_cache(user: str, now_utc: datetime, repos: list[dict]) -> str:
+	"""
+	Save list_repos payload to cache for reuse within TTL.
+	"""
+	cache_path = repo_list_cache_path(user)
+	cache_dir = os.path.dirname(cache_path)
+	if cache_dir:
+		os.makedirs(cache_dir, exist_ok=True)
+	payload = {
+		"user": user,
+		"fetched_at": now_utc.isoformat(),
+		"repos": repos,
+	}
+	with open(cache_path, "w", encoding="utf-8") as handle:
+		json.dump(payload, handle, ensure_ascii=True, sort_keys=True, indent=2)
+		handle.write("\n")
+	return cache_path
+
+
+#============================================
 def utc_now() -> datetime:
 	"""
 	Return UTC now as a timezone-aware datetime.
@@ -180,6 +251,8 @@ def repo_to_dict(repo_obj) -> dict:
 	"""
 	Normalize a PyGithub repository object to REST-like dict shape.
 	"""
+	if isinstance(repo_obj, dict):
+		return dict(repo_obj)
 	data = getattr(repo_obj, "raw_data", {}) or {}
 	repo = dict(data)
 	if "full_name" not in repo:
@@ -204,6 +277,8 @@ def commit_to_dict(commit_obj) -> dict:
 	"""
 	Normalize a PyGithub commit object to REST-like dict shape.
 	"""
+	if isinstance(commit_obj, dict):
+		return dict(commit_obj)
 	data = getattr(commit_obj, "raw_data", {}) or {}
 	commit = dict(data)
 	if "sha" not in commit:
@@ -234,6 +309,8 @@ def issue_to_dict(issue_obj) -> dict:
 	"""
 	Normalize a PyGithub issue object to REST-like dict shape.
 	"""
+	if isinstance(issue_obj, dict):
+		return dict(issue_obj)
 	data = getattr(issue_obj, "raw_data", {}) or {}
 	issue = dict(data)
 	if "number" not in issue:
@@ -293,13 +370,13 @@ def parse_latest_changelog_entry(changelog_text: str) -> tuple[str, str, str]:
 #============================================
 def fetch_repo_changelog_content(
 	client: github_client.GitHubClient,
-	repo_obj,
+	repo_full_name: str,
 	ref_name: str,
 ) -> dict:
 	"""
 	Fetch docs/CHANGELOG.md metadata and text from one repository.
 	"""
-	payload = client.get_file_content(repo_obj, "docs/CHANGELOG.md", ref_name)
+	payload = client.get_file_content(repo_full_name, "docs/CHANGELOG.md", ref_name)
 	if payload is None:
 		return {}
 	result = {
@@ -558,22 +635,33 @@ def main() -> None:
 	stopped_due_to_rate_limit = False
 	stopped_reason = ""
 	log_step("Fetching repository list.")
-	repos = []
-	try:
-		repo_iter = client.list_repos(user)
-		if args.max_repos > 0:
-			for repo_obj in repo_iter:
-				repos.append(repo_obj)
-				if len(repos) >= args.max_repos:
-					break
+	repos: list[dict] = load_repo_list_cache(user, window_end)
+	if repos:
+		log_step(
+			f"Repository list cache hit: {len(repos)} repo(s) from {repo_list_cache_path(user)}"
+		)
+	else:
+		stale_repos = load_repo_list_cache(user, window_end, max_age_seconds=None)
+		if stale_repos:
+			repos = stale_repos
+			log_step(
+				"Repository list stale-cache fallback: "
+				+ f"{len(repos)} repo(s) from {repo_list_cache_path(user)}"
+			)
 		else:
-			repos = list(repo_iter)
-	except github_client.RateLimitError as error:
-		stopped_due_to_rate_limit = True
-		stopped_reason = str(error)
-		log_step(stopped_reason)
-		log_step("Repository listing stopped by rate limit; writing summary-only output.")
+			try:
+				repo_iter = client.list_repos(user)
+				repo_objects = list(repo_iter)
+				repos = [repo_to_dict(repo_obj) for repo_obj in repo_objects]
+				cache_path = save_repo_list_cache(user, window_end, repos)
+				log_step(f"Repository list cache refreshed: {len(repos)} repo(s) -> {cache_path}")
+			except github_client.RateLimitError as error:
+				stopped_due_to_rate_limit = True
+				stopped_reason = str(error)
+				log_step(stopped_reason)
+				log_step("Repository listing stopped by rate limit; writing summary-only output.")
 	if args.max_repos > 0:
+		repos = repos[: args.max_repos]
 		log_step(f"Applied --max-repos cap: {len(repos)} repo(s).")
 	else:
 		log_step(f"Repository candidates: {len(repos)}.")
@@ -609,8 +697,7 @@ def main() -> None:
 		}
 		write_jsonl_line(handle, start_record)
 
-		for repo_obj in repos:
-			repo = repo_to_dict(repo_obj)
+		for repo in repos:
 			if repo.get("fork") and not args.include_forks:
 				log_step(f"Skipping fork repo: {repo.get('full_name') or '(unknown)'}")
 				continue
@@ -653,13 +740,13 @@ def main() -> None:
 			repo_pull_request_count = 0
 
 			try:
-				commits = client.list_commits(repo_obj, window_start, window_end)
+				commits = client.list_commits(repo_full_name, window_start, window_end)
 			except github_client.RateLimitError as error:
 				stopped_due_to_rate_limit = True
 				stopped_reason = str(error)
 				log_step(stopped_reason)
-				log_step("Stopping further repo detail fetches and writing partial output.")
-				break
+				log_step(f"Skipping repo after rate limit during commits: {repo_full_name}")
+				continue
 			for commit_obj in commits:
 				commit = commit_to_dict(commit_obj)
 				commit_record = build_commit_record(
@@ -678,13 +765,13 @@ def main() -> None:
 			log_step(f"Repo {repo_full_name}: collected {repo_commit_count} commit record(s).")
 
 			try:
-				issues = client.list_issues(repo_obj, window_start)
+				issues = client.list_issues(repo_full_name, window_start)
 			except github_client.RateLimitError as error:
 				stopped_due_to_rate_limit = True
 				stopped_reason = str(error)
 				log_step(stopped_reason)
-				log_step("Stopping further repo detail fetches and writing partial output.")
-				break
+				log_step(f"Skipping repo after rate limit during issues: {repo_full_name}")
+				continue
 			for issue_obj in issues:
 				issue = issue_to_dict(issue_obj)
 				event_time = issue.get("updated_at") or issue.get("created_at") or ""
@@ -718,15 +805,15 @@ def main() -> None:
 				try:
 					changelog_info = fetch_repo_changelog_content(
 						client,
-						repo_obj,
+						repo_full_name,
 						ref_name,
 					)
 				except github_client.RateLimitError as error:
 					stopped_due_to_rate_limit = True
 					stopped_reason = str(error)
 					log_step(stopped_reason)
-					log_step("Stopping further repo detail fetches and writing partial output.")
-					break
+					log_step(f"Skipping repo after rate limit during changelog fetch: {repo_full_name}")
+					continue
 				if changelog_info:
 					changelog_record = build_changelog_record(
 						user,
@@ -777,6 +864,13 @@ def main() -> None:
 	)
 	if stopped_due_to_rate_limit:
 		log_step("Run finished with partial data due to GitHub API rate limiting.")
+	usage = client.api_usage_snapshot()
+	log_step(
+		"GitHub API usage: "
+		+ f"calls={usage.get('api_call_count', 0)}, "
+		+ f"cache_hits={usage.get('cache_hit_count', 0)}, "
+		+ f"cache_misses={usage.get('cache_miss_count', 0)}"
+	)
 
 
 if __name__ == "__main__":

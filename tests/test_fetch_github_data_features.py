@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import timedelta
 
 import git_file_utils
 
@@ -106,3 +107,47 @@ def test_write_daily_cache_files(tmp_path) -> None:
 	summary = json.loads(lines[-1])
 	assert summary["record_type"] == "daily_summary"
 	assert summary["total_records"] == 1
+
+
+#============================================
+def test_repo_list_cache_round_trip(tmp_path, monkeypatch) -> None:
+	"""
+	Repo list cache should save and load within 24-hour TTL.
+	"""
+	monkeypatch.chdir(tmp_path)
+	now = fetch_github_data.parse_iso("2026-02-22T12:00:00+00:00")
+	repos = [{"full_name": "vosslab/example", "name": "example"}]
+	cache_path = fetch_github_data.save_repo_list_cache("vosslab", now, repos)
+	assert os.path.isfile(cache_path)
+	loaded = fetch_github_data.load_repo_list_cache("vosslab", now + timedelta(hours=1))
+	assert loaded == repos
+
+
+#============================================
+def test_repo_list_cache_expires_after_24_hours(tmp_path, monkeypatch) -> None:
+	"""
+	Repo list cache should expire when older than 24 hours.
+	"""
+	monkeypatch.chdir(tmp_path)
+	now = fetch_github_data.parse_iso("2026-02-22T12:00:00+00:00")
+	repos = [{"full_name": "vosslab/example2", "name": "example2"}]
+	fetch_github_data.save_repo_list_cache("vosslab", now, repos)
+	expired = fetch_github_data.load_repo_list_cache("vosslab", now + timedelta(hours=25))
+	assert expired == []
+
+
+#============================================
+def test_repo_list_cache_allows_stale_when_requested(tmp_path, monkeypatch) -> None:
+	"""
+	Repo list cache should load stale entries when max age is disabled.
+	"""
+	monkeypatch.chdir(tmp_path)
+	now = fetch_github_data.parse_iso("2026-02-22T12:00:00+00:00")
+	repos = [{"full_name": "vosslab/example3", "name": "example3"}]
+	fetch_github_data.save_repo_list_cache("vosslab", now, repos)
+	stale_loaded = fetch_github_data.load_repo_list_cache(
+		"vosslab",
+		now + timedelta(days=3),
+		max_age_seconds=None,
+	)
+	assert stale_loaded == repos
