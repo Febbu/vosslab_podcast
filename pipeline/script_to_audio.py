@@ -9,6 +9,12 @@ import soundfile
 import torch
 from qwen_tts import Qwen3TTSModel
 
+from podlib import pipeline_settings
+
+
+DEFAULT_SCRIPT_PATH = "out/podcast_script.txt"
+DEFAULT_OUTPUT_PATH = "out/episode.wav"
+
 
 #============================================
 def log_step(message: str) -> None:
@@ -29,13 +35,18 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--script",
-		default="out/podcast_script.txt",
+		default=DEFAULT_SCRIPT_PATH,
 		help="Path to speaker script text file.",
 	)
 	parser.add_argument(
 		"--output",
-		default="out/episode.wav",
+		default=DEFAULT_OUTPUT_PATH,
 		help="Path to output WAV audio file.",
+	)
+	parser.add_argument(
+		"--settings",
+		default="settings.yaml",
+		help="YAML settings path for default GitHub username.",
 	)
 	parser.add_argument(
 		"--voices",
@@ -190,12 +201,24 @@ def main() -> None:
 	Generate one WAV file from an N-speaker podcast script.
 	"""
 	args = parse_args()
+	settings, _settings_path = pipeline_settings.load_settings(args.settings)
+	user = pipeline_settings.get_github_username(settings, "vosslab")
+	script_arg = pipeline_settings.resolve_user_scoped_out_path(
+		args.script,
+		DEFAULT_SCRIPT_PATH,
+		user,
+	)
+	output_arg = pipeline_settings.resolve_user_scoped_out_path(
+		args.output,
+		DEFAULT_OUTPUT_PATH,
+		user,
+	)
 	log_step(
 		"Starting audio stage with "
-		+ f"script={os.path.abspath(args.script)}, output={os.path.abspath(args.output)}, "
+		+ f"script={os.path.abspath(script_arg)}, output={os.path.abspath(output_arg)}, "
 		+ f"voices={os.path.abspath(args.voices)}, model_id={args.model_id}"
 	)
-	script_path = os.path.abspath(args.script)
+	script_path = os.path.abspath(script_arg)
 	if not os.path.isfile(script_path):
 		raise FileNotFoundError(f"Missing script file: {script_path}")
 
@@ -257,7 +280,7 @@ def main() -> None:
 
 	log_step("Concatenating generated segments into final waveform.")
 	audio = numpy.concatenate(segments)
-	output_path = os.path.abspath(args.output)
+	output_path = os.path.abspath(output_arg)
 	os.makedirs(os.path.dirname(output_path), exist_ok=True)
 	log_step(f"Writing WAV output to {output_path}")
 	soundfile.write(output_path, audio, sample_rate)

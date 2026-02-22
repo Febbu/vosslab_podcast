@@ -11,6 +11,8 @@ from podlib import pipeline_settings
 
 
 SAY_LOCALE_TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.@-]*$")
+DEFAULT_SCRIPT_PATH = "out/podcast_script.txt"
+DEFAULT_OUTPUT_PATH = "out/episode_siri.aiff"
 
 
 #============================================
@@ -32,12 +34,12 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--script",
-		default="out/podcast_script.txt",
+		default=DEFAULT_SCRIPT_PATH,
 		help="Path to podcast script text file.",
 	)
 	parser.add_argument(
 		"--output",
-		default="out/episode_siri.aiff",
+		default=DEFAULT_OUTPUT_PATH,
 		help="Path to output audio file (AIFF recommended).",
 	)
 	parser.add_argument(
@@ -218,11 +220,22 @@ def main() -> None:
 	"""
 	args = parse_args()
 	settings, settings_path = pipeline_settings.load_settings(args.settings)
+	user = pipeline_settings.get_github_username(settings, "vosslab")
 	default_voice = pipeline_settings.get_setting_str(settings, ["tts", "say", "voice"], "")
 	default_rate_wpm = pipeline_settings.get_setting_int(
 		settings,
 		["tts", "say", "rate_wpm"],
 		185,
+	)
+	script_arg = pipeline_settings.resolve_user_scoped_out_path(
+		args.script,
+		DEFAULT_SCRIPT_PATH,
+		user,
+	)
+	output_arg = pipeline_settings.resolve_user_scoped_out_path(
+		args.output,
+		DEFAULT_OUTPUT_PATH,
+		user,
 	)
 
 	requested_voice = default_voice if args.voice is None else args.voice
@@ -239,8 +252,8 @@ def main() -> None:
 		log_step(f"Listed {len(voices)} voice(s).")
 		return
 
-	script_path = os.path.abspath(args.script)
-	output_path = os.path.abspath(args.output)
+	script_path = os.path.abspath(script_arg)
+	output_path = os.path.abspath(output_arg)
 	log_step(
 		"Starting say audio stage with "
 		+ f"script={script_path}, output={output_path}, "

@@ -7,8 +7,9 @@ LABEL="com.vosslab.podcast.pipeline"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$LAUNCH_AGENTS_DIR/$LABEL.plist"
 RUN_SCRIPT="$REPO_ROOT/automation/run_local_pipeline.py"
-STDOUT_LOG="$REPO_ROOT/out/launchd_pipeline.log"
-STDERR_LOG="$REPO_ROOT/out/launchd_pipeline.error.log"
+SYSTEM_LOG_DIR="$HOME/Library/Logs/vosslab_podcast/launchd"
+STDOUT_LOG="$SYSTEM_LOG_DIR/launchd_pipeline.log"
+STDERR_LOG="$SYSTEM_LOG_DIR/launchd_pipeline.error.log"
 GUI_DOMAIN="gui/$(id -u)"
 
 log_step() {
@@ -21,7 +22,7 @@ log_step "Installing launchd job from repo root: $REPO_ROOT"
 
 log_step "Ensuring LaunchAgents and output directories exist."
 mkdir -p "$LAUNCH_AGENTS_DIR"
-mkdir -p "$REPO_ROOT/out"
+mkdir -p "$SYSTEM_LOG_DIR"
 
 if [[ ! -x "$RUN_SCRIPT" ]]; then
 	log_step "Missing executable run script: $RUN_SCRIPT"

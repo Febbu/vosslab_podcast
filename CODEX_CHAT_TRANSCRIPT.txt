@@ -941,3 +941,132 @@ What was tested
 
 Next actions
 1. Optionally mirror the same early-exit policy in any future `outline_to_*` stages to keep behavior consistent.
+
+---
+Session Update: 2026-02-21 (fetch last complete day at 5am local)
+
+What changed
+- Updated `/Users/vosslab/nsh/vosslab_podcast/pipeline/fetch_github_data.py` so `--last-day` (and other N-day windows) use the last fully completed local reset window at 05:00.
+- Added `compute_completed_window_local()` and `compute_completed_window_utc()` to centralize window boundary logic.
+- Active fetch windows now anchor at local 05:00, then convert to UTC for API calls and record timestamps.
+- Output filename date stamp now uses local window start date (completed-day label), not wall-clock current date.
+- Daily cache day keys now derive from window start, and timestamp bucketing now uses local logical-day mapping with the 05:00 reset boundary.
+- `parse_iso()` now normalizes naive timestamps to UTC to keep datetime handling safe.
+
+What was tested
+- `source source_me.sh && pytest tests/test_fetch_github_data_features.py -q` (pass: `10 passed`)
+- `source source_me.sh && pytest tests/ -q` (pass: `371 passed`)
+
+Next actions
+1. If you want the reset hour configurable, add `github.day_reset_hour_local` in `settings.yaml` and thread it through fetch + runner logs.
+
+---
+Session Update: 2026-02-21 (TZ-aware 5am reset window)
+
+What changed
+- Updated `/Users/vosslab/nsh/vosslab_podcast/pipeline/fetch_github_data.py` to make 5am reset-window timezone explicit.
+- Reset timezone now resolves from `TZ` env first; if unset, defaults to `America/Chicago`.
+- Window boundaries, day-key generation, and per-record daily bucket mapping now all use the same resolved reset timezone.
+- Log output now prints reset timezone name in the window line.
+
+What was tested
+- `source source_me.sh && pytest tests/test_fetch_github_data_features.py -q` (pass: `10 passed`)
+- `source source_me.sh && pytest tests/ -q` (pass: `371 passed`)
+
+Next actions
+1. If desired, add `github.day_reset_timezone` in `settings.yaml` so timezone can be set without environment variables.
+
+---
+Session Update: 2026-02-21 (User-scoped default output paths)
+
+What changed
+- Added shared helpers in `/Users/vosslab/nsh/vosslab_podcast/pipeline/podlib/pipeline_settings.py`:
+  - `get_github_username()`
+  - `resolve_user_scoped_out_path()`
+- Updated pipeline scripts so default `out/...` paths now resolve to `out/<github.username>/...` while preserving explicit custom CLI paths:
+  - `/Users/vosslab/nsh/vosslab_podcast/pipeline/fetch_github_data.py`
+  - `/Users/vosslab/nsh/vosslab_podcast/pipeline/github_data_to_outline.py`
+  - `/Users/vosslab/nsh/vosslab_podcast/pipeline/outline_to_blog_post.py`
+  - `/Users/vosslab/nsh/vosslab_podcast/pipeline/outline_to_bluesky_post.py`
+  - `/Users/vosslab/nsh/vosslab_podcast/pipeline/outline_to_podcast_script.py`
+  - `/Users/vosslab/nsh/vosslab_podcast/pipeline/script_to_audio.py`
+  - `/Users/vosslab/nsh/vosslab_podcast/pipeline/script_to_audio_say.py`
+- `fetch_github_data.py` repo-list cache path is now user-scoped by default (`out/<user>/cache/list_repos.json`).
+- `github_data_to_outline.py` now falls back to latest `out/<user>/github_data_*.jsonl` when default input path is missing.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/automation/run_local_pipeline.py` to rely on script defaults (user-scoped paths), load username from settings, and detect latest user-scoped fetch output for post-fetch summary checks.
+
+What was tested
+- `source source_me.sh && pytest tests/` (pass: `371 passed`)
+
+Next actions
+1. If you want strict per-user separation for low-level GitHub API cache files too, add an explicit user-scoped cache root to `GitHubClient` initialization and pass it from fetch.
+
+---
+Session Update: 2026-02-21 (OUT directory spec + full user-scoped cache alignment)
+
+What changed
+- Added `/Users/vosslab/nsh/vosslab_podcast/docs/OUT_DIRECTORY_ORGANIZATION_SPEC.md` as the canonical output-layout contract for all scripts.
+- Linked spec from `/Users/vosslab/nsh/vosslab_podcast/README.md`.
+- Completed user-scoped separation for low-level GitHub API cache:
+  - `/Users/vosslab/nsh/vosslab_podcast/pipeline/podlib/github_client.py` now accepts `cache_dir` in `GitHubClient`.
+  - `/Users/vosslab/nsh/vosslab_podcast/pipeline/fetch_github_data.py` now passes user-scoped `out/<user>/cache/github_api`.
+
+What was tested
+- `source source_me.sh && pytest tests/` (pass: `371 passed`)
+
+Next actions
+1. Optionally update README examples to use current script names and user-scoped default paths throughout.
+
+---
+Session Update: 2026-02-21 (OUT spec compliance audit for scripts)
+
+What changed
+- Audited `pipeline/` and `automation/` scripts against `/Users/vosslab/nsh/vosslab_podcast/docs/OUT_DIRECTORY_ORGANIZATION_SPEC.md`.
+- Fixed remaining non-compliant output path in `/Users/vosslab/nsh/vosslab_podcast/automation/install_launchd_pipeline.sh`:
+  - moved launchd logs from bare `out/` root to allowed scratch namespace `out/tmp/launchd/`.
+- Verified script defaults remain user-scoped in pipeline stages (`out/<user>/...`) with CLI override preservation.
+
+What was tested
+- `bash -n automation/install_launchd_pipeline.sh`
+- `bash -n automation/uninstall_launchd_pipeline.sh`
+- `source source_me.sh && pytest tests/` (pass: `371 passed`)
+
+Next actions
+1. Optionally add a dedicated compliance test that rejects new bare `out/` writes in scripts (except approved namespaces like `out/tmp/`, `out/smoke/`, `out/samples/`, `out/archive/`).
+
+---
+Session Update: 2026-02-21 (Logs namespace update)
+
+What changed
+- Updated `/Users/vosslab/nsh/vosslab_podcast/docs/OUT_DIRECTORY_ORGANIZATION_SPEC.md` to define logs namespace:
+  - `out/logs/<program>/...`
+  - includes `out/logs/launchd/...` examples.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/automation/install_launchd_pipeline.sh` to write logs to:
+  - `out/logs/launchd/launchd_pipeline.log`
+  - `out/logs/launchd/launchd_pipeline.error.log`
+
+What was tested
+- `bash -n automation/install_launchd_pipeline.sh`
+- `bash -n automation/uninstall_launchd_pipeline.sh`
+- `source source_me.sh && pytest tests/` (pass: `371 passed`)
+
+Next actions
+1. Optionally add a small helper in `podlib` for script-level default log directories (`out/logs/<script_name>/`) to standardize future logging behavior.
+
+---
+Session Update: 2026-02-21 (Launchd system log path exception)
+
+What changed
+- Updated `/Users/vosslab/nsh/vosslab_podcast/automation/install_launchd_pipeline.sh` to write logs to system log path:
+  - `~/Library/Logs/vosslab_podcast/launchd/launchd_pipeline.log`
+  - `~/Library/Logs/vosslab_podcast/launchd/launchd_pipeline.error.log`
+- Updated `/Users/vosslab/nsh/vosslab_podcast/docs/OUT_DIRECTORY_ORGANIZATION_SPEC.md` with an explicit launchd exception allowing `~/Library/Logs/...`.
+- Updated spec log examples to non-launchd `out/logs/<program>/...` paths to avoid ambiguity.
+
+What was tested
+- `bash -n automation/install_launchd_pipeline.sh`
+- `bash -n automation/uninstall_launchd_pipeline.sh`
+- `source source_me.sh && pytest tests/` (pass: `371 passed`)
+
+Next actions
+1. Optionally add a tiny smoke check in install script to print absolute log folder path after install for quick manual verification.

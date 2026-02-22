@@ -12,6 +12,10 @@ from podlib import pipeline_settings
 
 
 REPO_SLUG_RE = re.compile(r"[^a-z0-9._-]+")
+DEFAULT_INPUT_PATH = "out/github_data.jsonl"
+DEFAULT_OUTLINE_JSON = "out/outline.json"
+DEFAULT_OUTLINE_TXT = "out/outline.txt"
+DEFAULT_REPO_SHARDS_DIR = "out/outline_repos"
 
 
 #============================================
@@ -33,22 +37,22 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--input",
-		default="out/github_data.jsonl",
+		default=DEFAULT_INPUT_PATH,
 		help="Path to input JSONL data from fetch_github_data.py.",
 	)
 	parser.add_argument(
 		"--outline-json",
-		default="out/outline.json",
+		default=DEFAULT_OUTLINE_JSON,
 		help="Path to structured outline JSON output.",
 	)
 	parser.add_argument(
 		"--outline-txt",
-		default="out/outline.txt",
+		default=DEFAULT_OUTLINE_TXT,
 		help="Path to plain-text outline output.",
 	)
 	parser.add_argument(
 		"--repo-shards-dir",
-		default="out/outline_repos",
+		default=DEFAULT_REPO_SHARDS_DIR,
 		help="Directory for per-repo outline shard files.",
 	)
 	parser.add_argument(
@@ -129,6 +133,28 @@ def add_local_llm_wrapper_to_path() -> None:
 		if wrapper_repo not in sys.path:
 			sys.path.insert(0, wrapper_repo)
 		return
+
+
+#============================================
+def resolve_latest_fetch_input(input_path: str) -> str:
+	"""
+	Fallback to latest dated fetch JSONL file when default input is missing.
+	"""
+	if os.path.isfile(input_path):
+		return input_path
+	directory = os.path.dirname(input_path)
+	pattern = os.path.join(directory, "github_data_*.jsonl")
+	candidates = []
+	for candidate in glob.glob(pattern):
+		filename = os.path.basename(candidate)
+		if filename == "github_data.jsonl":
+			continue
+		if os.path.isfile(candidate):
+			candidates.append(candidate)
+	if not candidates:
+		return input_path
+	candidates.sort(key=os.path.getmtime, reverse=True)
+	return candidates[0]
 
 
 #============================================
@@ -791,10 +817,37 @@ def main() -> None:
 	"""
 	args = parse_args()
 	settings, settings_path = pipeline_settings.load_settings(args.settings)
+	user = pipeline_settings.get_github_username(settings, "vosslab")
 	default_transport = pipeline_settings.get_enabled_llm_transport(settings)
 	default_model = pipeline_settings.get_llm_provider_model(settings, default_transport)
 	default_max_tokens = pipeline_settings.get_setting_int(settings, ["llm", "max_tokens"], 1200)
 	default_repo_limit = pipeline_settings.get_setting_int(settings, ["llm", "repo_limit"], 0)
+	input_path = pipeline_settings.resolve_user_scoped_out_path(
+		args.input,
+		DEFAULT_INPUT_PATH,
+		user,
+	)
+	if input_path == pipeline_settings.resolve_user_scoped_out_path(
+		DEFAULT_INPUT_PATH,
+		DEFAULT_INPUT_PATH,
+		user,
+	):
+		input_path = resolve_latest_fetch_input(input_path)
+	outline_json_path = pipeline_settings.resolve_user_scoped_out_path(
+		args.outline_json,
+		DEFAULT_OUTLINE_JSON,
+		user,
+	)
+	outline_txt_path = pipeline_settings.resolve_user_scoped_out_path(
+		args.outline_txt,
+		DEFAULT_OUTLINE_TXT,
+		user,
+	)
+	repo_shards_dir = pipeline_settings.resolve_user_scoped_out_path(
+		args.repo_shards_dir,
+		DEFAULT_REPO_SHARDS_DIR,
+		user,
+	)
 
 	transport_name = args.llm_transport or default_transport
 	if transport_name not in {"ollama", "apple", "auto"}:
@@ -815,8 +868,8 @@ def main() -> None:
 		+ f"transport={transport_name}, model={model_override or 'auto'}, "
 		+ f"max_tokens={max_tokens}, repo_limit={repo_limit}"
 	)
-	log_step(f"Parsing input JSONL: {os.path.abspath(args.input)}")
-	outline = parse_jsonl_to_outline(args.input)
+	log_step(f"Parsing input JSONL: {os.path.abspath(input_path)}")
+	outline = parse_jsonl_to_outline(input_path)
 	log_step(
 		f"Parsed outline totals: repos={outline.get('totals', {}).get('repos', 0)}, "
 		+ f"commits={outline.get('totals', {}).get('commit_records', 0)}, "
@@ -829,14 +882,14 @@ def main() -> None:
 		model_override=model_override,
 		max_tokens=max_tokens,
 		repo_limit=repo_limit,
-		repo_shards_dir=args.repo_shards_dir,
+		repo_shards_dir=repo_shards_dir,
 		continue_mode=args.continue_mode,
 	)
 	write_outline_outputs(
 		outline,
-		args.outline_json,
-		args.outline_txt,
-		args.repo_shards_dir,
+		outline_json_path,
+		outline_txt_path,
+		repo_shards_dir,
 		args.skip_repo_shards,
 	)
 	log_step("Outline stage complete.")

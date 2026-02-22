@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import argparse
+import glob
 import json
 import os
 import random
 import subprocess
 import time
 from datetime import datetime
+
+import yaml
 
 try:
 	import rich.console
@@ -159,12 +162,11 @@ def run_stage_with_retry(
 
 
 #============================================
-def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[str, list[str]]]:
+def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]:
 	"""
 	Build ordered stage command list.
 	"""
 	window_flag = resolve_window_flag(args)
-	fetch_output = f"out/github_data_{date_text}.jsonl"
 	stages = [
 		(
 			"fetch",
@@ -174,10 +176,6 @@ def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[
 				"--settings",
 				args.settings,
 				window_flag,
-				"--output",
-				fetch_output,
-				"--daily-cache-dir",
-				"out/daily_cache",
 			],
 		),
 		(
@@ -187,12 +185,6 @@ def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[
 				"pipeline/github_data_to_outline.py",
 				"--settings",
 				args.settings,
-				"--input",
-				fetch_output,
-				"--outline-json",
-				"out/outline.json",
-				"--outline-txt",
-				"out/outline.txt",
 			],
 		),
 		(
@@ -202,10 +194,6 @@ def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[
 				"pipeline/outline_to_blog_post.py",
 				"--settings",
 				args.settings,
-				"--input",
-				"out/outline.json",
-				"--output",
-				"out/blog_post.md",
 				"--word-limit",
 				"500",
 			],
@@ -217,10 +205,6 @@ def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[
 				"pipeline/outline_to_bluesky_post.py",
 				"--settings",
 				args.settings,
-				"--input",
-				"out/outline.json",
-				"--output",
-				"out/bluesky_post.txt",
 				"--char-limit",
 				"140",
 			],
@@ -232,10 +216,6 @@ def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[
 				"pipeline/outline_to_podcast_script.py",
 				"--settings",
 				args.settings,
-				"--input",
-				"out/outline.json",
-				"--output",
-				"out/podcast_script.txt",
 				"--num-speakers",
 				str(args.num_speakers),
 				"--word-limit",
@@ -286,6 +266,44 @@ def render_summary_table(
 
 
 #============================================
+def load_settings_username(repo_root: str, settings_path_text: str) -> str:
+	"""
+	Load github.username from settings with vosslab fallback.
+	"""
+	if os.path.isabs(settings_path_text):
+		settings_path = settings_path_text
+	else:
+		settings_path = os.path.join(repo_root, settings_path_text)
+	if not os.path.isfile(settings_path):
+		return "vosslab"
+	with open(settings_path, "r", encoding="utf-8") as handle:
+		data = yaml.safe_load(handle.read())
+	if not isinstance(data, dict):
+		return "vosslab"
+	github = data.get("github")
+	if not isinstance(github, dict):
+		return "vosslab"
+	username = str(github.get("username", "")).strip()
+	if username:
+		return username
+	return "vosslab"
+
+
+#============================================
+def resolve_latest_fetch_output_path(repo_root: str, user: str) -> str:
+	"""
+	Resolve latest user-scoped fetch JSONL output file.
+	"""
+	base_dir = os.path.join(repo_root, "out", user)
+	pattern = os.path.join(base_dir, "github_data_*.jsonl")
+	candidates = [path for path in glob.glob(pattern) if os.path.isfile(path)]
+	if not candidates:
+		return os.path.join(base_dir, "github_data.jsonl")
+	candidates.sort(key=os.path.getmtime, reverse=True)
+	return candidates[0]
+
+
+#============================================
 def main() -> None:
 	"""
 	Run local pipeline stages with colorful output and retries.
@@ -302,12 +320,14 @@ def main() -> None:
 	log_step(console, f"Starting local pipeline run from {repo_root}", style="cyan")
 	log_step(console, f"Using settings file: {os.path.join(repo_root, args.settings)}", style="cyan")
 	log_step(console, f"Window mode: {resolve_window_flag(args)}", style="cyan")
+	user = load_settings_username(repo_root, args.settings)
+	log_step(console, f"Using GitHub user: {user}", style="cyan")
 	date_text = datetime.now().astimezone().strftime("%Y-%m-%d")
 	log_step(console, f"Using local date stamp for fetch output: {date_text}", style="cyan")
-	fetch_output_path = os.path.join(repo_root, f"out/github_data_{date_text}.jsonl")
+	fetch_output_path = resolve_latest_fetch_output_path(repo_root, user)
 
 	stage_rows: list[tuple[str, str, str]] = []
-	for stage_name, stage_command in make_stage_commands(args, date_text):
+	for stage_name, stage_command in make_stage_commands(args):
 		stage_start = time.time()
 		try:
 			elapsed = run_stage_with_retry(
@@ -320,6 +340,7 @@ def main() -> None:
 			)
 			stage_rows.append((stage_name, "[green]ok[/green]", f"{elapsed:.1f}"))
 			if stage_name == "fetch":
+				fetch_output_path = resolve_latest_fetch_output_path(repo_root, user)
 				summary = load_fetch_summary(fetch_output_path)
 				record_counts = summary.get("record_counts", {}) if isinstance(summary, dict) else {}
 				commit_records = int(record_counts.get("commit", 0))
@@ -339,7 +360,7 @@ def main() -> None:
 			raise RuntimeError(f"Pipeline aborted at stage: {stage_name}")
 
 	render_summary_table(console, stage_rows)
-	log_step(console, f"Pipeline run complete: {os.path.join(repo_root, 'out')}", style="green")
+	log_step(console, f"Pipeline run complete: {os.path.join(repo_root, 'out', user)}", style="green")
 
 
 if __name__ == "__main__":

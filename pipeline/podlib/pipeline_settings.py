@@ -108,6 +108,33 @@ def get_setting_bool(settings: dict, keys: list[str], default_value: bool) -> bo
 
 
 #============================================
+def get_github_username(settings: dict, default_value: str = "vosslab") -> str:
+	"""
+	Resolve GitHub username from settings with fallback.
+	"""
+	value = get_setting_str(settings, ["github", "username"], "").strip()
+	if value:
+		return value
+	return default_value
+
+
+#============================================
+def resolve_user_scoped_out_path(path_text: str, default_path_text: str, user: str) -> str:
+	"""
+	Scope default out/ paths under out/<user>/ while preserving custom paths.
+	"""
+	path_value = (path_text or "").strip()
+	default_value = (default_path_text or "").strip()
+	if path_value != default_value:
+		return path_value
+	if not default_value.startswith("out/"):
+		return path_value
+	tail = default_value[len("out/"):].lstrip("/")
+	user_value = (user or "").strip() or "vosslab"
+	return os.path.join("out", user_value, tail)
+
+
+#============================================
 def get_enabled_llm_transport(settings: dict) -> str:
 	"""
 	Resolve exactly one enabled LLM provider from settings.

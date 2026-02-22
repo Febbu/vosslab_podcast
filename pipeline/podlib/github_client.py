@@ -18,7 +18,7 @@ class GitHubClient:
 	Thin PyGithub wrapper for fetch pipeline use-cases.
 	"""
 
-	def __init__(self, token: str, log_fn=None):
+	def __init__(self, token: str, log_fn=None, cache_dir: str = "out/cache/github_api"):
 		self.log_fn = log_fn
 		self._rate_check_count = 0
 		self._low_remaining_threshold = 5
@@ -28,7 +28,7 @@ class GitHubClient:
 		self._cache_hit_count = 0
 		self._cache_miss_count = 0
 		self.cache = github_cache.GitHubQueryCache(
-			cache_dir="out/cache/github_api",
+			cache_dir=cache_dir,
 			default_ttl_seconds=24 * 60 * 60,
 		)
 		try:
@@ -121,6 +121,15 @@ class GitHubClient:
 		raise RuntimeError(f"Unsupported rate-limit reset value: {reset_value!r}")
 
 	#============================================
+	def format_local_reset_time(self, reset_time: datetime) -> str:
+		"""
+		Format reset timestamp as local clock time only.
+		"""
+		if reset_time.tzinfo is None:
+			reset_time = reset_time.replace(tzinfo=timezone.utc)
+		return reset_time.astimezone().strftime("%H:%M:%S")
+
+	#============================================
 	def get_core_rate_limit_snapshot(self) -> tuple[int, datetime]:
 		"""
 		Read core rate-limit remaining/reset across PyGithub versions.
@@ -155,7 +164,7 @@ class GitHubClient:
 			return
 		self.log(
 			f"Rate limit check ({context}): remaining={remaining}, "
-			+ f"reset_at={reset_time.isoformat()}"
+			+ f"reset_local={self.format_local_reset_time(reset_time)}"
 		)
 		if remaining > self._low_remaining_threshold:
 			return
@@ -229,13 +238,13 @@ class GitHubClient:
 		remaining_text = "unknown"
 		try:
 			remaining, reset_time = self.get_core_rate_limit_snapshot()
-			reset_text = reset_time.isoformat()
+			reset_text = self.format_local_reset_time(reset_time)
 			remaining_text = str(remaining)
 		except Exception:
 			pass
 		raise RateLimitError(
 			"GitHub API rate limit exceeded while "
-			+ f"{context}; remaining={remaining_text}; reset_at={reset_text}. "
+			+ f"{context}; remaining={remaining_text}; reset_local={reset_text}. "
 			+ "Provide settings.yaml github.token for higher limits."
 		)
 

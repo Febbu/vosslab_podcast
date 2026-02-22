@@ -13,6 +13,9 @@ from podlib import pipeline_text_utils
 
 WORD_RE = re.compile(r"[A-Za-z0-9']+")
 DATE_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+DEFAULT_INPUT_PATH = "out/outline.json"
+DEFAULT_OUTPUT_PATH = "out/blog_post.md"
+DEFAULT_REPO_DRAFT_CACHE_DIR = "out/blog_repo_drafts"
 
 
 #============================================
@@ -34,12 +37,12 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--input",
-		default="out/outline.json",
+		default=DEFAULT_INPUT_PATH,
 		help="Path to outline JSON input.",
 	)
 	parser.add_argument(
 		"--output",
-		default="out/blog_post.md",
+		default=DEFAULT_OUTPUT_PATH,
 		help="Path to output Markdown blog post (local date stamp added to filename).",
 	)
 	parser.add_argument(
@@ -72,7 +75,7 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--repo-draft-cache-dir",
-		default="out/blog_repo_drafts",
+		default=DEFAULT_REPO_DRAFT_CACHE_DIR,
 		help="Directory for per-repo intermediate blog draft cache files.",
 	)
 	parser.add_argument(
@@ -740,9 +743,25 @@ def main() -> None:
 	"""
 	args = parse_args()
 	settings, settings_path = pipeline_settings.load_settings(args.settings)
+	user = pipeline_settings.get_github_username(settings, "vosslab")
 	default_transport = pipeline_settings.get_enabled_llm_transport(settings)
 	default_model = pipeline_settings.get_llm_provider_model(settings, default_transport)
 	default_max_tokens = pipeline_settings.get_setting_int(settings, ["llm", "max_tokens"], 1200)
+	input_path = pipeline_settings.resolve_user_scoped_out_path(
+		args.input,
+		DEFAULT_INPUT_PATH,
+		user,
+	)
+	output_path_arg = pipeline_settings.resolve_user_scoped_out_path(
+		args.output,
+		DEFAULT_OUTPUT_PATH,
+		user,
+	)
+	repo_draft_cache_dir = pipeline_settings.resolve_user_scoped_out_path(
+		args.repo_draft_cache_dir,
+		DEFAULT_REPO_DRAFT_CACHE_DIR,
+		user,
+	)
 	transport_name = args.llm_transport or default_transport
 	if transport_name not in {"ollama", "apple", "auto"}:
 		raise RuntimeError(f"Unsupported llm transport in settings: {transport_name}")
@@ -757,7 +776,7 @@ def main() -> None:
 
 	log_step(
 		"Starting blog stage with "
-		+ f"input={os.path.abspath(args.input)}, output={os.path.abspath(args.output)}, "
+		+ f"input={os.path.abspath(input_path)}, output={os.path.abspath(output_path_arg)}, "
 		+ f"word_limit={args.word_limit}"
 	)
 	log_step(f"Using settings file: {settings_path}")
@@ -770,14 +789,14 @@ def main() -> None:
 		+ describe_llm_execution_path(transport_name, model_override)
 	)
 	log_step("Loading outline JSON.")
-	outline = load_outline(args.input)
+	outline = load_outline(input_path)
 	if not outline_has_activity(outline):
 		log_step("No repo commit activity in outline; exiting blog stage without LLM calls.")
 		log_step("No blog file written.")
 		return
 	log_step(
 		"Repo draft cache: "
-		+ f"dir={os.path.abspath(args.repo_draft_cache_dir)}, continue={args.continue_mode}"
+		+ f"dir={os.path.abspath(repo_draft_cache_dir)}, continue={args.continue_mode}"
 	)
 	log_step("Generating Markdown blog post with incremental drafts and final assembly pass.")
 	try:
@@ -788,7 +807,7 @@ def main() -> None:
 			max_tokens=max_tokens,
 			word_limit=args.word_limit,
 			continue_mode=args.continue_mode,
-			repo_draft_cache_dir=os.path.abspath(args.repo_draft_cache_dir),
+			repo_draft_cache_dir=os.path.abspath(repo_draft_cache_dir),
 			logger=log_step,
 		)
 	except RuntimeError as error:
@@ -796,7 +815,7 @@ def main() -> None:
 		log_step("No blog file written.")
 		return
 	date_text = local_date_stamp()
-	dated_output = date_stamp_output_path(args.output, date_text)
+	dated_output = date_stamp_output_path(output_path_arg, date_text)
 	output_path = os.path.abspath(dated_output)
 	log_step(f"Using local date stamp for blog filename: {date_text}")
 	output_dir = os.path.dirname(output_path)

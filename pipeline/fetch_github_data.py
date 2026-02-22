@@ -6,6 +6,8 @@ import re
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfoNotFoundError
 
 from podlib import github_client
 from podlib import pipeline_settings
@@ -19,6 +21,8 @@ except ModuleNotFoundError:
 DATE_HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b")
 DATE_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 REPO_LIST_CACHE_TTL_SECONDS = 24 * 60 * 60
+DAY_RESET_HOUR_LOCAL = 5
+DEFAULT_DAY_RESET_TIMEZONE = "America/Chicago"
 RICH_CONSOLE = rich.console.Console() if rich is not None else None
 
 
@@ -137,6 +141,82 @@ def local_date_stamp() -> str:
 
 
 #============================================
+def resolve_day_reset_timezone_name() -> str:
+	"""
+	Resolve reset-timezone name from TZ env with Chicago default.
+	"""
+	value = (os.environ.get("TZ", "") or "").strip()
+	if value:
+		return value
+	return DEFAULT_DAY_RESET_TIMEZONE
+
+
+#============================================
+def resolve_day_reset_timezone() -> ZoneInfo:
+	"""
+	Resolve reset-timezone object from TZ env with safe fallback.
+	"""
+	name = resolve_day_reset_timezone_name()
+	try:
+		return ZoneInfo(name)
+	except ZoneInfoNotFoundError:
+		return ZoneInfo(DEFAULT_DAY_RESET_TIMEZONE)
+
+
+#============================================
+def compute_completed_window_local(
+	window_days: int,
+	now_local: datetime,
+	day_reset_hour_local: int = DAY_RESET_HOUR_LOCAL,
+) -> tuple[datetime, datetime]:
+	"""
+	Compute last completed local window boundaries at a fixed reset hour.
+	"""
+	if window_days < 1:
+		raise RuntimeError("window days must be >= 1")
+	if now_local.tzinfo is None:
+		raise RuntimeError("now_local must be timezone-aware")
+	reset_today = now_local.replace(
+		hour=day_reset_hour_local,
+		minute=0,
+		second=0,
+		microsecond=0,
+	)
+	if now_local < reset_today:
+		window_end_local = reset_today - timedelta(days=1)
+	else:
+		window_end_local = reset_today
+	window_start_local = window_end_local - timedelta(days=window_days)
+	return window_start_local, window_end_local
+
+
+#============================================
+def compute_completed_window_utc(
+	window_days: int,
+	now_utc: datetime | None = None,
+	day_reset_hour_local: int = DAY_RESET_HOUR_LOCAL,
+	reset_tz: ZoneInfo | None = None,
+) -> tuple[datetime, datetime]:
+	"""
+	Compute last completed day-window in UTC using reset timezone boundaries.
+	"""
+	value = now_utc or utc_now()
+	if value.tzinfo is None:
+		value = value.replace(tzinfo=timezone.utc)
+	tz_value = reset_tz or resolve_day_reset_timezone()
+	now_local = value.astimezone(tz_value)
+	window_start_local, window_end_local = compute_completed_window_local(
+		window_days,
+		now_local,
+		day_reset_hour_local=day_reset_hour_local,
+	)
+	return (
+		window_start_local.astimezone(timezone.utc),
+		window_end_local.astimezone(timezone.utc),
+	)
+
+
+#============================================
 def date_stamp_output_path(output_path: str, date_text: str) -> str:
 	"""
 	Ensure output filename includes one local-date stamp.
@@ -161,8 +241,13 @@ def repo_list_cache_path(user: str) -> str:
 	"""
 	Build cache path for one user's list_repos payload.
 	"""
-	user_key = re.sub(r"[^a-zA-Z0-9_.-]+", "_", (user or "unknown")).strip("_") or "unknown"
-	return os.path.abspath(os.path.join("out", "cache", f"list_repos_{user_key}.json"))
+	return os.path.abspath(
+		pipeline_settings.resolve_user_scoped_out_path(
+			os.path.join("out", "cache", "list_repos.json"),
+			os.path.join("out", "cache", "list_repos.json"),
+			user,
+		)
+	)
 
 
 #============================================
@@ -243,6 +328,8 @@ def parse_iso(ts: str) -> datetime:
 	if not ts:
 		return datetime(1970, 1, 1, tzinfo=timezone.utc)
 	parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+	if parsed.tzinfo is None:
+		parsed = parsed.replace(tzinfo=timezone.utc)
 	return parsed
 
 
@@ -535,23 +622,40 @@ def build_issue_record(
 
 
 #============================================
-def timestamp_to_day_key(ts: str, fallback_day: str) -> str:
+def timestamp_to_day_key(
+	ts: str,
+	fallback_day: str,
+	day_reset_hour_local: int = DAY_RESET_HOUR_LOCAL,
+	reset_tz: ZoneInfo | None = None,
+) -> str:
 	"""
-	Resolve YYYY-MM-DD key from timestamp text.
+	Resolve logical YYYY-MM-DD key from timestamp text using reset timezone hour.
 	"""
-	if ts and len(ts) >= 10 and ts[4] == "-" and ts[7] == "-":
-		return ts[:10]
-	return fallback_day
+	try:
+		tz_value = reset_tz or resolve_day_reset_timezone()
+		event_local = parse_iso(ts).astimezone(tz_value)
+	except Exception:
+		return fallback_day
+	shifted = event_local - timedelta(hours=day_reset_hour_local)
+	return shifted.date().isoformat()
 
 
 #============================================
-def build_window_day_keys(window_end: datetime, window_days: int) -> list[str]:
+def build_window_day_keys(
+	window_start: datetime,
+	window_days: int,
+	reset_tz: ZoneInfo | None = None,
+) -> list[str]:
 	"""
 	Build ordered per-day keys for cache output.
 	"""
+	if window_days < 1:
+		return []
+	tz_value = reset_tz or resolve_day_reset_timezone()
+	start_date = window_start.astimezone(tz_value).date()
 	keys = []
-	for offset in range(window_days - 1, -1, -1):
-		day_key = (window_end - timedelta(days=offset)).date().isoformat()
+	for offset in range(window_days):
+		day_key = (start_date + timedelta(days=offset)).isoformat()
 		keys.append(day_key)
 	return keys
 
@@ -561,11 +665,16 @@ def add_record_to_daily_bucket(
 	daily_buckets: dict[str, list[dict]],
 	record: dict,
 	fallback_day: str,
+	reset_tz: ZoneInfo | None = None,
 ) -> str:
 	"""
 	Add one record to its day-bucket list.
 	"""
-	day_key = timestamp_to_day_key(record.get("event_time", ""), fallback_day)
+	day_key = timestamp_to_day_key(
+		record.get("event_time", ""),
+		fallback_day,
+		reset_tz=reset_tz,
+	)
 	if day_key not in daily_buckets:
 		daily_buckets[day_key] = []
 	daily_buckets[day_key].append(record)
@@ -634,17 +743,27 @@ def main() -> None:
 	"""
 	args = parse_args()
 	settings, settings_path = pipeline_settings.load_settings(args.settings)
-	default_user = pipeline_settings.get_setting_str(settings, ["github", "username"], "")
-	user = args.user.strip() or default_user or "vosslab"
+	default_user = pipeline_settings.get_github_username(settings, "vosslab")
+	user = args.user.strip() or default_user
 	log_step(f"Using settings file: {settings_path}")
 	log_step(f"Using GitHub user: {user}")
 	window_days = resolve_window_days(args)
-	window_end = utc_now()
-	window_start = window_end - timedelta(days=window_days)
-	fallback_day = window_end.date().isoformat()
+	day_reset_tz = resolve_day_reset_timezone()
+	day_reset_tz_name = resolve_day_reset_timezone_name()
+	window_start, window_end = compute_completed_window_utc(
+		window_days,
+		reset_tz=day_reset_tz,
+	)
+	window_start_local = window_start.astimezone(day_reset_tz)
+	window_end_local = window_end.astimezone(day_reset_tz)
 	log_step(
 		f"Active window: {window_start.isoformat()} -> {window_end.isoformat()} "
 		+ f"({window_days} day(s))"
+	)
+	log_step(
+		"Reset window: "
+		+ f"{window_start_local.isoformat()} -> {window_end_local.isoformat()} "
+		+ f"(reset at {DAY_RESET_HOUR_LOCAL:02d}:00 {day_reset_tz_name})"
 	)
 
 	token = pipeline_settings.get_setting_str(settings, ["github", "token"], "")
@@ -652,9 +771,14 @@ def main() -> None:
 		log_step("Using authenticated GitHub API mode via settings.yaml github.token.")
 	else:
 		log_step("Using unauthenticated GitHub API mode (lower rate limit).")
+	api_cache_dir = pipeline_settings.resolve_user_scoped_out_path(
+		os.path.join("out", "cache", "github_api"),
+		os.path.join("out", "cache", "github_api"),
+		user,
+	)
 
 	try:
-		client = github_client.GitHubClient(token, log_fn=log_step)
+		client = github_client.GitHubClient(token, log_fn=log_step, cache_dir=api_cache_dir)
 	except RuntimeError as error:
 		log_step(str(error))
 		log_step("Aborting fetch run before network calls.")
@@ -693,8 +817,18 @@ def main() -> None:
 	else:
 		log_step(f"Repository candidates: {len(repos)}.")
 
-	date_text = local_date_stamp()
-	dated_output = date_stamp_output_path(args.output, date_text)
+	scoped_output_arg = pipeline_settings.resolve_user_scoped_out_path(
+		args.output,
+		"out/github_data.jsonl",
+		user,
+	)
+	scoped_daily_cache_dir = pipeline_settings.resolve_user_scoped_out_path(
+		args.daily_cache_dir,
+		"out/daily_cache",
+		user,
+	)
+	date_text = window_start_local.date().isoformat()
+	dated_output = date_stamp_output_path(scoped_output_arg, date_text)
 	output_path = os.path.abspath(dated_output)
 	output_dir = os.path.dirname(output_path)
 	os.makedirs(output_dir, exist_ok=True)
@@ -709,7 +843,8 @@ def main() -> None:
 		"repo_changelog": 0,
 	}
 	daily_buckets: dict[str, list[dict]] = {}
-	day_keys = build_window_day_keys(window_end, window_days)
+	day_keys = build_window_day_keys(window_start, window_days, reset_tz=day_reset_tz)
+	fallback_day = day_keys[-1] if day_keys else date_text
 
 	with open(output_path, "w", encoding="utf-8") as handle:
 		start_record = {
@@ -720,7 +855,7 @@ def main() -> None:
 			"window_days": window_days,
 			"fetched_at": window_end.isoformat(),
 			"source": "fetch_github_data.py",
-			"daily_cache_dir": os.path.abspath(args.daily_cache_dir),
+			"daily_cache_dir": os.path.abspath(scoped_daily_cache_dir),
 		}
 		write_jsonl_line(handle, start_record)
 
@@ -770,7 +905,12 @@ def main() -> None:
 						repo,
 					)
 					write_jsonl_line(handle, repo_record)
-					add_record_to_daily_bucket(daily_buckets, repo_record, fallback_day)
+					add_record_to_daily_bucket(
+						daily_buckets,
+						repo_record,
+						fallback_day,
+						reset_tz=day_reset_tz,
+					)
 					record_counts["repo"] += 1
 				commit_record = build_commit_record(
 					user,
@@ -781,7 +921,12 @@ def main() -> None:
 					commit,
 				)
 				write_jsonl_line(handle, commit_record)
-				add_record_to_daily_bucket(daily_buckets, commit_record, fallback_day)
+				add_record_to_daily_bucket(
+					daily_buckets,
+					commit_record,
+					fallback_day,
+					reset_tz=day_reset_tz,
+				)
 				record_counts["commit"] += 1
 				repo_activity_count += 1
 			log_step(f"Repo {repo_full_name}: collected {repo_commit_count} commit record(s).")
@@ -813,7 +958,12 @@ def main() -> None:
 						changelog_info,
 					)
 					write_jsonl_line(handle, changelog_record)
-					add_record_to_daily_bucket(daily_buckets, changelog_record, fallback_day)
+					add_record_to_daily_bucket(
+						daily_buckets,
+						changelog_record,
+						fallback_day,
+						reset_tz=day_reset_tz,
+					)
 					record_counts["repo_changelog"] += 1
 
 		end_record = {
@@ -824,14 +974,14 @@ def main() -> None:
 			"window_days": window_days,
 			"fetched_at": utc_now().isoformat(),
 			"record_counts": record_counts,
-			"daily_cache_dir": os.path.abspath(args.daily_cache_dir),
+			"daily_cache_dir": os.path.abspath(scoped_daily_cache_dir),
 			"stopped_due_to_rate_limit": stopped_due_to_rate_limit,
 			"stop_reason": stopped_reason,
 		}
 		write_jsonl_line(handle, end_record)
 
 	written_daily_files = write_daily_cache_files(
-		args.daily_cache_dir,
+		scoped_daily_cache_dir,
 		user,
 		window_start,
 		window_end,
@@ -849,7 +999,7 @@ def main() -> None:
 	log_step(f"Wrote {output_path} ({total_records} records)")
 	log_step(
 		"Daily cache files written: "
-		+ f"{len(written_daily_files)} in {os.path.abspath(args.daily_cache_dir)}"
+		+ f"{len(written_daily_files)} in {os.path.abspath(scoped_daily_cache_dir)}"
 	)
 	if stopped_due_to_rate_limit:
 		log_step("Run finished with partial data due to GitHub API rate limiting.")

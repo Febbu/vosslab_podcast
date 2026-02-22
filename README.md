@@ -2,6 +2,8 @@
 
 Generates a weekly multi-channel content package from GitHub activity.
 
+Directory layout contract: [docs/OUT_DIRECTORY_ORGANIZATION_SPEC.md](docs/OUT_DIRECTORY_ORGANIZATION_SPEC.md)
+
 ## Process flow
 1. `pipeline/fetch_github_data.py`
 - Fetch all relevant GitHub activity data and write a large JSONL file.

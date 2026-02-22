@@ -2,7 +2,9 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 
 import git_file_utils
 
@@ -52,6 +54,44 @@ def test_resolve_window_days_last_month() -> None:
 	Last month flag should resolve to 30 days.
 	"""
 	assert fetch_github_data.resolve_window_days(make_args(last_month=True)) == 30
+
+
+#============================================
+def test_compute_completed_window_local_examples() -> None:
+	"""
+	Last-day window should be the most recent fully completed 5am->5am local period.
+	"""
+	tz = timezone(timedelta(hours=-5))
+	start_one, end_one = fetch_github_data.compute_completed_window_local(
+		1,
+		datetime(2026, 2, 22, 8, 0, tzinfo=tz),
+	)
+	assert start_one.isoformat() == "2026-02-21T05:00:00-05:00"
+	assert end_one.isoformat() == "2026-02-22T05:00:00-05:00"
+
+	start_two, end_two = fetch_github_data.compute_completed_window_local(
+		1,
+		datetime(2026, 2, 22, 20, 0, tzinfo=tz),
+	)
+	assert start_two.isoformat() == "2026-02-21T05:00:00-05:00"
+	assert end_two.isoformat() == "2026-02-22T05:00:00-05:00"
+
+	start_three, end_three = fetch_github_data.compute_completed_window_local(
+		1,
+		datetime(2026, 2, 23, 4, 0, tzinfo=tz),
+	)
+	assert start_three.isoformat() == "2026-02-21T05:00:00-05:00"
+	assert end_three.isoformat() == "2026-02-22T05:00:00-05:00"
+
+
+#============================================
+def test_build_window_day_keys_from_window_start() -> None:
+	"""
+	Day keys should begin at local window start date for completed windows.
+	"""
+	window_start = fetch_github_data.parse_iso("2026-02-21T10:00:00+00:00")
+	keys = fetch_github_data.build_window_day_keys(window_start, 3)
+	assert keys == ["2026-02-21", "2026-02-22", "2026-02-23"]
 
 
 #============================================
