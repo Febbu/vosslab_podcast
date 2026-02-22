@@ -923,3 +923,21 @@ What was tested
 Next actions
 1. Run `python3 automation/run_local_pipeline.py --last-day` locally and confirm stage logs/readability match your preference.
 2. If desired, add CLI flags to the Python runner for overriding blog/bluesky/podcast target lengths without editing code.
+
+---
+Session Update: 2026-02-21 (Fail-Fast for outline_to_* stages)
+
+What changed
+- Added fail-fast activity guards to `pipeline/outline_to_bluesky_post.py` and `pipeline/outline_to_podcast_script.py`.
+- Both scripts now check outline totals immediately after loading input and exit early when there is no repo commit activity (`totals.repos == 0` or `totals.commit_records == 0`).
+- Early exit happens before any LLM call and before writing output files.
+- Logging now explicitly reports no-activity exits:
+  - Bluesky: "No repo commit activity in outline; exiting bluesky stage without LLM calls." and "No Bluesky file written."
+  - Podcast: "No repo commit activity in outline; exiting podcast script stage without LLM calls." and "No podcast script file written."
+- `pipeline/outline_to_blog_post.py` already had matching fail-fast behavior and was left as-is.
+
+What was tested
+- `source source_me.sh && pytest tests/` (executed via `bash -lc ...`; pass: `369 passed`)
+
+Next actions
+1. Optionally mirror the same early-exit policy in any future `outline_to_*` stages to keep behavior consistent.

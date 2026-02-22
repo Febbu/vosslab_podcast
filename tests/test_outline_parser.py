@@ -10,7 +10,7 @@ PIPELINE_DIR = os.path.join(REPO_ROOT, "pipeline")
 if PIPELINE_DIR not in sys.path:
 	sys.path.insert(0, PIPELINE_DIR)
 
-import outline_github_data
+import github_data_to_outline
 
 
 #============================================
@@ -82,7 +82,7 @@ def test_parse_jsonl_to_outline(tmp_path) -> None:
 		},
 	]
 	write_jsonl(str(jsonl_path), records)
-	outline = outline_github_data.parse_jsonl_to_outline(str(jsonl_path))
+	outline = github_data_to_outline.parse_jsonl_to_outline(str(jsonl_path))
 
 	assert outline["user"] == "vosslab"
 	assert outline["totals"]["repos"] == 1
@@ -127,7 +127,7 @@ def test_render_outline_text_contains_sections() -> None:
 		],
 		"notable_commit_messages": ["first update"],
 	}
-	text = outline_github_data.render_outline_text(outline)
+	text = github_data_to_outline.render_outline_text(outline)
 	assert "GitHub Weekly Outline" in text
 	assert "Repository Breakdown" in text
 	assert "vosslab/demo" in text
@@ -172,7 +172,7 @@ def test_write_repo_outline_shards(tmp_path) -> None:
 			},
 		],
 	}
-	manifest_path = outline_github_data.write_repo_outline_shards(outline, str(tmp_path))
+	manifest_path = github_data_to_outline.write_repo_outline_shards(outline, str(tmp_path))
 	assert os.path.isfile(manifest_path)
 	with open(manifest_path, "r", encoding="utf-8") as handle:
 		manifest = json.loads(handle.read())
@@ -203,7 +203,7 @@ def test_summarize_outline_with_llm_uses_client(monkeypatch) -> None:
 		assert model_override == ""
 		return FakeClient()
 
-	monkeypatch.setattr(outline_github_data, "create_llm_client", fake_create_client)
+	monkeypatch.setattr(github_data_to_outline, "create_llm_client", fake_create_client)
 	outline = {
 		"user": "vosslab",
 		"window_start": "2026-02-15",
@@ -227,7 +227,7 @@ def test_summarize_outline_with_llm_uses_client(monkeypatch) -> None:
 			}
 		],
 	}
-	result = outline_github_data.summarize_outline_with_llm(
+	result = github_data_to_outline.summarize_outline_with_llm(
 		outline,
 		transport_name="ollama",
 		model_override="",
@@ -271,7 +271,7 @@ def test_load_cached_repo_outline_map_filters_by_window(tmp_path) -> None:
 		"window_start": "2026-02-15",
 		"window_end": "2026-02-22",
 	}
-	cache_map = outline_github_data.load_cached_repo_outline_map(str(tmp_path), outline)
+	cache_map = github_data_to_outline.load_cached_repo_outline_map(str(tmp_path), outline)
 	assert cache_map == {"vosslab/repo_one": "cached one"}
 
 
@@ -306,7 +306,7 @@ def test_summarize_outline_with_llm_reuses_cached_repo(monkeypatch, tmp_path) ->
 		assert model_override == ""
 		return FakeClient()
 
-	monkeypatch.setattr(outline_github_data, "create_llm_client", fake_create_client)
+	monkeypatch.setattr(github_data_to_outline, "create_llm_client", fake_create_client)
 	outline = {
 		"user": "vosslab",
 		"window_start": "2026-02-15",
@@ -344,7 +344,7 @@ def test_summarize_outline_with_llm_reuses_cached_repo(monkeypatch, tmp_path) ->
 			},
 		],
 	}
-	result = outline_github_data.summarize_outline_with_llm(
+	result = github_data_to_outline.summarize_outline_with_llm(
 		outline,
 		transport_name="ollama",
 		model_override="",

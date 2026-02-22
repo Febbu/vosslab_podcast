@@ -20,7 +20,7 @@ def log_step(message: str) -> None:
 	Print one timestamped progress line.
 	"""
 	now_text = datetime.now().strftime("%H:%M:%S")
-	print(f"[outline_github_data {now_text}] {message}", flush=True)
+	print(f"[github_data_to_outline {now_text}] {message}", flush=True)
 
 
 #============================================
@@ -526,7 +526,11 @@ def parse_jsonl_to_outline(input_path: str) -> dict:
 			+ bucket["pull_request_count"]
 		)
 
-	repos = list(repo_map.values())
+	repos = []
+	for bucket in repo_map.values():
+		if bucket.get("commit_count", 0) < 1:
+			continue
+		repos.append(bucket)
 	repos.sort(
 		key=lambda item: (item["total_activity"], item["commit_count"], item["repo_full_name"]),
 		reverse=True,

@@ -216,6 +216,8 @@
 - `pipeline/fetch_github_data.py` now logs GitHub API usage counters at end of run.
 - `pipeline/fetch_github_data.py` now supports stale repo-list cache fallback when fresh list cache
   is unavailable, so list-rate-limit windows do not block local test runs.
+- `pipeline/fetch_github_data.py` repo detail collection is now commit-focused only (issues/pull
+  request listing calls were removed from fetch flow).
 - `tests/test_outline_to_blog_post.py` now includes coverage ensuring short valid Markdown is still
   accepted by blog quality checks.
 - `tests/test_outline_to_blog_post.py` now covers H1 salvage behavior for H2-leading and plain-text

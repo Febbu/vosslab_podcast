@@ -126,6 +126,17 @@ def load_outline(path: str) -> dict:
 
 
 #============================================
+def outline_has_activity(outline: dict) -> bool:
+	"""
+	Return True when outline has repo + commit activity to summarize.
+	"""
+	totals = outline.get("totals", {}) if isinstance(outline, dict) else {}
+	repo_count = int(totals.get("repos", 0))
+	commit_count = int(totals.get("commit_records", 0))
+	return (repo_count > 0) and (commit_count > 0)
+
+
+#============================================
 def build_blog_context(outline: dict) -> dict:
 	"""
 	Build compact blog generation context from outline data.
@@ -760,6 +771,10 @@ def main() -> None:
 	)
 	log_step("Loading outline JSON.")
 	outline = load_outline(args.input)
+	if not outline_has_activity(outline):
+		log_step("No repo commit activity in outline; exiting blog stage without LLM calls.")
+		log_step("No blog file written.")
+		return
 	log_step(
 		"Repo draft cache: "
 		+ f"dir={os.path.abspath(args.repo_draft_cache_dir)}, continue={args.continue_mode}"

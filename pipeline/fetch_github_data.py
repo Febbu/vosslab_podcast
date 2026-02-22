@@ -10,10 +10,16 @@ from datetime import timezone
 from podlib import github_client
 from podlib import pipeline_settings
 
+try:
+	import rich.console
+except ModuleNotFoundError:
+	rich = None
+
 
 DATE_HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b")
 DATE_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 REPO_LIST_CACHE_TTL_SECONDS = 24 * 60 * 60
+RICH_CONSOLE = rich.console.Console() if rich is not None else None
 
 
 #============================================
@@ -22,7 +28,19 @@ def log_step(message: str) -> None:
 	Print one timestamped progress line.
 	"""
 	now_text = datetime.now().strftime("%H:%M:%S")
-	print(f"[fetch_github_data {now_text}] {message}", flush=True)
+	line = f"[fetch_github_data {now_text}] {message}"
+	if RICH_CONSOLE is None:
+		print(line, flush=True)
+		return
+	lower = message.lower()
+	style = "cyan"
+	if ("failed" in lower) or ("error" in lower):
+		style = "bold red"
+	elif ("rate limit" in lower) or ("skipping" in lower):
+		style = "yellow"
+	elif ("wrote " in lower) or ("collected" in lower):
+		style = "green"
+	RICH_CONSOLE.print(line, style=style)
 
 
 #============================================
@@ -64,11 +82,20 @@ def parse_args() -> argparse.Namespace:
 		default="out/github_data.jsonl",
 		help="Path to JSONL output file.",
 	)
-	parser.add_argument(
+	fork_group = parser.add_mutually_exclusive_group()
+	fork_group.add_argument(
 		"--include-forks",
+		dest="include_forks",
 		action="store_true",
-		help="Include forked repos in fetch results.",
+		help="Include forked repos in fetch results (default).",
 	)
+	fork_group.add_argument(
+		"--no-include-forks",
+		dest="include_forks",
+		action="store_false",
+		help="Exclude forked repos from fetch results.",
+	)
+	parser.set_defaults(include_forks=True)
 	parser.add_argument(
 		"--max-repos",
 		type=int,
@@ -699,23 +726,12 @@ def main() -> None:
 
 		for repo in repos:
 			if repo.get("fork") and not args.include_forks:
-				log_step(f"Skipping fork repo: {repo.get('full_name') or '(unknown)'}")
+				log_step(f"Skipped repo: {repo.get('full_name') or '(unknown)'}")
 				continue
 			repo_full_name = repo.get("full_name") or ""
 			repo_name = repo.get("name") or ""
 			if not repo_full_name:
 				continue
-			log_step(f"Processing repo: {repo_full_name}")
-
-			repo_record = build_repo_record(
-				user,
-				window_start,
-				window_end,
-				repo,
-			)
-			write_jsonl_line(handle, repo_record)
-			add_record_to_daily_bucket(daily_buckets, repo_record, fallback_day)
-			record_counts["repo"] += 1
 
 			updated_marker = (
 				repo.get("updated_at")
@@ -729,15 +745,11 @@ def main() -> None:
 				window_end,
 			)
 			if not repo_recent:
-				log_step(
-					f"Skipping detail fetch for stale repo: {repo_full_name} "
-					+ f"(updated marker: {updated_marker or 'none'})"
-				)
+				log_step(f"Skipped repo: {repo_full_name}")
 				continue
+			log_step(f"Processing repo: {repo_full_name}")
 			repo_activity_count = 0
 			repo_commit_count = 0
-			repo_issue_count = 0
-			repo_pull_request_count = 0
 
 			try:
 				commits = client.list_commits(repo_full_name, window_start, window_end)
@@ -745,10 +757,21 @@ def main() -> None:
 				stopped_due_to_rate_limit = True
 				stopped_reason = str(error)
 				log_step(stopped_reason)
-				log_step(f"Skipping repo after rate limit during commits: {repo_full_name}")
+				log_step(f"Skipped repo: {repo_full_name}")
 				continue
 			for commit_obj in commits:
 				commit = commit_to_dict(commit_obj)
+				repo_commit_count += 1
+				if repo_commit_count == 1:
+					repo_record = build_repo_record(
+						user,
+						window_start,
+						window_end,
+						repo,
+					)
+					write_jsonl_line(handle, repo_record)
+					add_record_to_daily_bucket(daily_buckets, repo_record, fallback_day)
+					record_counts["repo"] += 1
 				commit_record = build_commit_record(
 					user,
 					window_start,
@@ -761,44 +784,10 @@ def main() -> None:
 				add_record_to_daily_bucket(daily_buckets, commit_record, fallback_day)
 				record_counts["commit"] += 1
 				repo_activity_count += 1
-				repo_commit_count += 1
 			log_step(f"Repo {repo_full_name}: collected {repo_commit_count} commit record(s).")
-
-			try:
-				issues = client.list_issues(repo_full_name, window_start)
-			except github_client.RateLimitError as error:
-				stopped_due_to_rate_limit = True
-				stopped_reason = str(error)
-				log_step(stopped_reason)
-				log_step(f"Skipping repo after rate limit during issues: {repo_full_name}")
+			if repo_commit_count < 1:
+				log_step(f"Skipped repo: {repo_full_name}")
 				continue
-			for issue_obj in issues:
-				issue = issue_to_dict(issue_obj)
-				event_time = issue.get("updated_at") or issue.get("created_at") or ""
-				event_dt = parse_iso(event_time)
-				if event_dt < window_start:
-					continue
-				issue_record = build_issue_record(
-					user,
-					window_start,
-					window_end,
-					repo_full_name,
-					repo_name,
-					issue,
-				)
-				write_jsonl_line(handle, issue_record)
-				add_record_to_daily_bucket(daily_buckets, issue_record, fallback_day)
-				record_type = issue_record["record_type"]
-				record_counts[record_type] += 1
-				repo_activity_count += 1
-				if record_type == "pull_request":
-					repo_pull_request_count += 1
-				else:
-					repo_issue_count += 1
-			log_step(
-				f"Repo {repo_full_name}: collected {repo_issue_count} issue record(s) and "
-				+ f"{repo_pull_request_count} pull request record(s)."
-			)
 
 			if (not args.skip_changelog) and (repo_recent or repo_activity_count > 0):
 				ref_name = repo.get("default_branch") or ""
@@ -812,7 +801,7 @@ def main() -> None:
 					stopped_due_to_rate_limit = True
 					stopped_reason = str(error)
 					log_step(stopped_reason)
-					log_step(f"Skipping repo after rate limit during changelog fetch: {repo_full_name}")
+					log_step(f"Skipped repo: {repo_full_name}")
 					continue
 				if changelog_info:
 					changelog_record = build_changelog_record(

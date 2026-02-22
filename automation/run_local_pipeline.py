@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import os
 import random
 import subprocess
@@ -183,7 +184,7 @@ def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[
 			"outline",
 			[
 				"python3",
-				"pipeline/outline_github_data.py",
+				"pipeline/github_data_to_outline.py",
 				"--settings",
 				args.settings,
 				"--input",
@@ -246,6 +247,28 @@ def make_stage_commands(args: argparse.Namespace, date_text: str) -> list[tuple[
 
 
 #============================================
+def load_fetch_summary(fetch_output_path: str) -> dict:
+	"""
+	Load run_summary record from fetch JSONL output.
+	"""
+	if not os.path.isfile(fetch_output_path):
+		return {}
+	summary = {}
+	with open(fetch_output_path, "r", encoding="utf-8") as handle:
+		for raw_line in handle:
+			line = raw_line.strip()
+			if not line:
+				continue
+			try:
+				record = json.loads(line)
+			except json.JSONDecodeError:
+				continue
+			if record.get("record_type") == "run_summary":
+				summary = record
+	return summary
+
+
+#============================================
 def render_summary_table(
 	console: rich.console.Console,
 	stage_rows: list[tuple[str, str, str]],
@@ -281,6 +304,7 @@ def main() -> None:
 	log_step(console, f"Window mode: {resolve_window_flag(args)}", style="cyan")
 	date_text = datetime.now().astimezone().strftime("%Y-%m-%d")
 	log_step(console, f"Using local date stamp for fetch output: {date_text}", style="cyan")
+	fetch_output_path = os.path.join(repo_root, f"out/github_data_{date_text}.jsonl")
 
 	stage_rows: list[tuple[str, str, str]] = []
 	for stage_name, stage_command in make_stage_commands(args, date_text):
@@ -295,6 +319,19 @@ def main() -> None:
 				args.retry_wait_seconds,
 			)
 			stage_rows.append((stage_name, "[green]ok[/green]", f"{elapsed:.1f}"))
+			if stage_name == "fetch":
+				summary = load_fetch_summary(fetch_output_path)
+				record_counts = summary.get("record_counts", {}) if isinstance(summary, dict) else {}
+				commit_records = int(record_counts.get("commit", 0))
+				repo_records = int(record_counts.get("repo", 0))
+				if commit_records < 1 or repo_records < 1:
+					log_step(
+						console,
+						"No repos with commits found in active window; stopping pipeline after fetch.",
+						style="yellow",
+					)
+					render_summary_table(console, stage_rows)
+					return
 		except subprocess.CalledProcessError:
 			elapsed = time.time() - stage_start
 			stage_rows.append((stage_name, "[red]failed[/red]", f"{elapsed:.1f}"))

@@ -23,8 +23,6 @@ class GitHubClient:
 		self._rate_check_count = 0
 		self._low_remaining_threshold = 5
 		self._max_proactive_sleep_seconds = 10
-		self._retry_wait_seconds = 10
-		self._retry_attempts_on_403 = 1
 		self._api_call_count = 0
 		self._api_calls_by_context: dict[str, int] = {}
 		self._cache_hit_count = 0
@@ -41,10 +39,22 @@ class GitHubClient:
 				"Missing dependency: PyGithub. Install it with pip install PyGithub."
 			) from error
 		self._github_exception_class = GithubException
+		self.client = self._build_github_client(Github, token)
+
+	#============================================
+	def _build_github_client(self, github_class, token: str):
+		"""
+		Create Github client with retry disabled when supported.
+		"""
 		if token:
-			self.client = Github(token)
-		else:
-			self.client = Github()
+			try:
+				return github_class(token, retry=None)
+			except TypeError:
+				return github_class(token)
+		try:
+			return github_class(retry=None)
+		except TypeError:
+			return github_class()
 
 	#============================================
 	def log(self, message: str) -> None:
@@ -175,26 +185,14 @@ class GitHubClient:
 	#============================================
 	def call_with_retry(self, context: str, call_fn):
 		"""
-		Run one API call with jitter and one retry on 403.
+		Run one API call with jitter.
 		"""
-		attempt = 0
-		while True:
-			self.sleep_request_jitter(context)
-			try:
-				self.record_api_call(context)
-				return call_fn()
-			except self._github_exception_class as error:
-				status = getattr(error, "status", None)
-				if (status == 403) and (attempt < self._retry_attempts_on_403):
-					attempt += 1
-					wait_seconds = self._retry_wait_seconds
-					self.log(
-						f"Request {context} hit 403; sleeping {wait_seconds}s before retry "
-						+ f"({attempt}/{self._retry_attempts_on_403})."
-					)
-					time.sleep(wait_seconds)
-					continue
-				self.raise_from_github_error(error, context)
+		self.sleep_request_jitter(context)
+		try:
+			self.record_api_call(context)
+			return call_fn()
+		except self._github_exception_class as error:
+			self.raise_from_github_error(error, context)
 
 	#============================================
 	def cached_query(
@@ -360,34 +358,21 @@ class GitHubClient:
 		Fetch one file content payload from live API.
 		"""
 		repo_obj = self.get_repo(repo_full_name)
-		attempt = 0
-		while True:
-			self.sleep_request_jitter(f"GET /repos/{repo_full_name}/contents/{path}")
-			try:
-				self.record_api_call(f"GET /repos/{repo_full_name}/contents/{path}")
-				if ref:
-					content = repo_obj.get_contents(path, ref=ref)
-				else:
-					content = repo_obj.get_contents(path)
-				break
-			except self._github_exception_class as error:
-				status = getattr(error, "status", None)
-				if status == 404:
-					return None
-				if (status == 403) and (attempt < self._retry_attempts_on_403):
-					attempt += 1
-					wait_seconds = self._retry_wait_seconds
-					self.log(
-						f"Request GET /repos/{repo_full_name}/contents/{path} hit 403; "
-						+ f"sleeping {wait_seconds}s before retry "
-						+ f"({attempt}/{self._retry_attempts_on_403})."
-					)
-					time.sleep(wait_seconds)
-					continue
-				self.raise_from_github_error(
-					error,
-					f"fetching {path} for {repo_full_name}",
-				)
+		self.sleep_request_jitter(f"GET /repos/{repo_full_name}/contents/{path}")
+		try:
+			self.record_api_call(f"GET /repos/{repo_full_name}/contents/{path}")
+			if ref:
+				content = repo_obj.get_contents(path, ref=ref)
+			else:
+				content = repo_obj.get_contents(path)
+		except self._github_exception_class as error:
+			status = getattr(error, "status", None)
+			if status == 404:
+				return None
+			self.raise_from_github_error(
+				error,
+				f"fetching {path} for {repo_full_name}",
+			)
 		if isinstance(content, list):
 			return None
 		text = content.decoded_content.decode("utf-8", errors="replace")

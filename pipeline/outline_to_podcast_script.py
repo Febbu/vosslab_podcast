@@ -112,6 +112,17 @@ def load_outline(path: str) -> dict:
 
 
 #============================================
+def outline_has_activity(outline: dict) -> bool:
+	"""
+	Return True when outline has repo + commit activity to summarize.
+	"""
+	totals = outline.get("totals", {}) if isinstance(outline, dict) else {}
+	repo_count = int(totals.get("repos", 0))
+	commit_count = int(totals.get("commit_records", 0))
+	return (repo_count > 0) and (commit_count > 0)
+
+
+#============================================
 def describe_llm_execution_path(transport_name: str, model_override: str) -> str:
 	"""
 	Describe configured LLM transport execution order.
@@ -783,6 +794,10 @@ def main() -> None:
 	)
 	log_step("Loading outline JSON.")
 	outline = load_outline(args.input)
+	if not outline_has_activity(outline):
+		log_step("No repo commit activity in outline; exiting podcast script stage without LLM calls.")
+		log_step("No podcast script file written.")
+		return
 	log_step("Building speaker label set.")
 	speaker_labels = build_speaker_labels(args.num_speakers)
 	log_step(
