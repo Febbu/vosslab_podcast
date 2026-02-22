@@ -188,6 +188,16 @@ def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]
 			],
 		),
 		(
+			"outline_compilation",
+			[
+				"python3",
+				"pipeline/outline_compilation.py",
+				"--settings",
+				args.settings,
+				window_flag,
+			],
+		),
+		(
 			"blog",
 			[
 				"python3",
@@ -304,6 +314,53 @@ def resolve_latest_fetch_output_path(repo_root: str, user: str) -> str:
 
 
 #============================================
+def find_latest_match(base_dir: str, pattern: str) -> str:
+	"""
+	Return latest matching file path or empty string.
+	"""
+	full_pattern = os.path.join(base_dir, pattern)
+	candidates = [path for path in glob.glob(full_pattern) if os.path.isfile(path)]
+	if not candidates:
+		return ""
+	candidates.sort(key=os.path.getmtime, reverse=True)
+	return candidates[0]
+
+
+#============================================
+def render_artifact_list(
+	console: rich.console.Console,
+	repo_root: str,
+	user: str,
+	date_text: str,
+) -> None:
+	"""
+	Print final artifact path list for quick review.
+	"""
+	user_out = os.path.join(repo_root, "out", user)
+	blog_path = find_latest_match(user_out, "blog_post_*.md")
+	bluesky_path = find_latest_match(user_out, "bluesky_post-*.txt")
+	podcast_script_path = find_latest_match(user_out, "podcast_script-*.txt")
+	expected_audio_mp3 = os.path.join(user_out, f"podcast_audio-{date_text}.mp3")
+
+	log_step(console, "Final artifacts:", style="bold cyan")
+	for label, path in [
+		("blog", blog_path),
+		("bluesky", bluesky_path),
+		("podcast_script", podcast_script_path),
+	]:
+		if not path:
+			console.print(f"- {label}: (missing)", style="yellow")
+			continue
+		relative = os.path.relpath(path, repo_root)
+		console.print(f"- {relative}", style="green")
+	relative_audio = os.path.relpath(expected_audio_mp3, repo_root)
+	if os.path.isfile(expected_audio_mp3):
+		console.print(f"- {relative_audio}", style="green")
+	else:
+		console.print(f"- {relative_audio} (not generated in this run)", style="yellow")
+
+
+#============================================
 def main() -> None:
 	"""
 	Run local pipeline stages with colorful output and retries.
@@ -361,6 +418,7 @@ def main() -> None:
 
 	render_summary_table(console, stage_rows)
 	log_step(console, f"Pipeline run complete: {os.path.join(repo_root, 'out', user)}", style="green")
+	render_artifact_list(console, repo_root, user, date_text)
 
 
 if __name__ == "__main__":

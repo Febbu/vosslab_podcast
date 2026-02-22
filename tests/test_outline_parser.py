@@ -128,8 +128,8 @@ def test_render_outline_text_contains_sections() -> None:
 		"notable_commit_messages": ["first update"],
 	}
 	text = github_data_to_outline.render_outline_text(outline)
-	assert "GitHub Weekly Outline" in text
-	assert "Repository Breakdown" in text
+	assert "# GitHub Daily Outline" in text
+	assert "## Repository Activity" in text
 	assert "vosslab/demo" in text
 
 
@@ -194,7 +194,7 @@ def test_summarize_outline_with_llm_uses_client(monkeypatch) -> None:
 	"""
 	class FakeClient:
 		def generate(self, prompt=None, messages=None, purpose=None, max_tokens=0):
-			if "weekly global outline" in (purpose or ""):
+			if "daily global outline" in (purpose or ""):
 				return "GLOBAL SUMMARY"
 			return "REPO SUMMARY"
 
@@ -297,7 +297,7 @@ def test_summarize_outline_with_llm_reuses_cached_repo(monkeypatch, tmp_path) ->
 	class FakeClient:
 		def generate(self, prompt=None, messages=None, purpose=None, max_tokens=0):
 			generated_purposes.append(purpose or "")
-			if "weekly global outline" in (purpose or ""):
+			if "daily global outline" in (purpose or ""):
 				return "GLOBAL SUMMARY"
 			return "NEW REPO SUMMARY"
 
@@ -357,4 +357,5 @@ def test_summarize_outline_with_llm_reuses_cached_repo(monkeypatch, tmp_path) ->
 	assert result["repo_activity"][1]["llm_repo_outline"] == "NEW REPO SUMMARY"
 	assert result["llm_cached_repo_outline_count"] == 1
 	assert result["llm_generated_repo_outline_count"] == 1
-	assert generated_purposes == ["weekly repo outline", "weekly global outline"]
+	assert generated_purposes[0] == "daily repo outline"
+	assert "daily global outline" in generated_purposes

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import math
 from datetime import datetime
 from datetime import timezone
 
@@ -12,10 +13,14 @@ from podlib import pipeline_settings
 
 
 REPO_SLUG_RE = re.compile(r"[^a-z0-9._-]+")
+WORD_RE = re.compile(r"[A-Za-z0-9']+")
 DEFAULT_INPUT_PATH = "out/github_data.jsonl"
 DEFAULT_OUTLINE_JSON = "out/outline.json"
-DEFAULT_OUTLINE_TXT = "out/outline.txt"
+DEFAULT_OUTLINE_TXT = "out/outline.md"
 DEFAULT_REPO_SHARDS_DIR = "out/outline_repos"
+DEFAULT_DAILY_OUTLINES_DIR = "out/daily_outlines"
+DAILY_GLOBAL_TARGET_WORDS = 2000
+MIN_REPO_TARGET_WORDS = 750
 
 
 #============================================
@@ -54,6 +59,11 @@ def parse_args() -> argparse.Namespace:
 		"--repo-shards-dir",
 		default=DEFAULT_REPO_SHARDS_DIR,
 		help="Directory for per-repo outline shard files.",
+	)
+	parser.add_argument(
+		"--daily-outlines-dir",
+		default=DEFAULT_DAILY_OUTLINES_DIR,
+		help="Directory for dated daily outline snapshots (JSON + Markdown).",
 	)
 	parser.add_argument(
 		"--skip-repo-shards",
@@ -187,7 +197,7 @@ def build_repo_llm_prompt(outline: dict, bucket: dict, rank: int, repo_total: in
 	context = build_repo_context(bucket)
 	context_json = json.dumps(context, ensure_ascii=True, indent=2)
 	prompt = (
-		"You are summarizing one repository from a weekly engineering dataset.\n"
+		"You are summarizing one repository from a daily engineering dataset.\n"
 		"Write a detailed outline in plain text using section headers and bullet points.\n"
 		"Required sections:\n"
 		"1. Executive Summary\n"
@@ -207,17 +217,69 @@ def build_repo_llm_prompt(outline: dict, bucket: dict, rank: int, repo_total: in
 
 
 #============================================
-def build_global_llm_prompt(outline: dict, repo_summaries: list[dict]) -> str:
+def build_repo_llm_prompt_with_target(
+	outline: dict,
+	bucket: dict,
+	rank: int,
+	repo_total: int,
+	target_words: int,
+) -> str:
 	"""
-	Build one global weekly LLM prompt from repo-level summaries.
+	Build one repo-specific LLM prompt with target word guidance.
+	"""
+	base = build_repo_llm_prompt(outline, bucket, rank, repo_total)
+	target_line = f"Target length: about {target_words} words.\n"
+	return base.replace(
+		"Do not invent repo names or metrics. Use only provided data.\n\n",
+		"Do not invent repo names or metrics. Use only provided data.\n"
+		+ target_line
+		+ "Keep output readable and concise while preserving specific evidence.\n\n",
+		1,
+	)
+
+
+#============================================
+def count_words(text: str) -> int:
+	"""
+	Count words in a text block.
+	"""
+	return len(WORD_RE.findall(text or ""))
+
+
+#============================================
+def compute_repo_outline_target_words(repo_count: int) -> int:
+	"""
+	Compute per-repo target as max(750, ceil(2000/(N-1))).
+	"""
+	if repo_count <= 1:
+		return DAILY_GLOBAL_TARGET_WORDS
+	calculated = math.ceil(DAILY_GLOBAL_TARGET_WORDS / (repo_count - 1))
+	return max(MIN_REPO_TARGET_WORDS, calculated)
+
+
+#============================================
+def build_global_llm_prompt(
+	outline: dict,
+	repo_summaries: list[dict],
+	repo_limit: int = 12,
+	excerpt_chars: int = 700,
+	target_words: int = DAILY_GLOBAL_TARGET_WORDS,
+) -> str:
+	"""
+	Build one global compilation LLM prompt from repo-level summaries.
 	"""
 	compact_repos = []
-	for item in repo_summaries:
+	ordered = sorted(
+		repo_summaries,
+		key=lambda item: int(item.get("total_activity", 0)),
+		reverse=True,
+	)
+	for item in ordered[:repo_limit]:
 		compact_repos.append(
 			{
 				"repo_full_name": item.get("repo_full_name", ""),
 				"total_activity": item.get("total_activity", 0),
-				"repo_outline_excerpt": item.get("repo_outline", "")[:1500],
+				"repo_outline_excerpt": item.get("repo_outline", "")[:excerpt_chars],
 			}
 		)
 	context = {
@@ -230,18 +292,120 @@ def build_global_llm_prompt(outline: dict, repo_summaries: list[dict]) -> str:
 	}
 	context_json = json.dumps(context, ensure_ascii=True, indent=2)
 	prompt = (
-		"You are creating a weekly cross-repo engineering outline.\n"
+		"You are creating a daily cross-repo engineering outline.\n"
 		"Write a detailed plain-text outline with these sections:\n"
-		"1. Week Overview\n"
+		f"Target length: about {target_words} words.\n"
+		"1. Day Overview\n"
 		"2. Top Repository Highlights\n"
 		"3. Cross-Repo Patterns\n"
 		"4. Risks and Follow-up\n"
-		"5. Next Week Focus\n"
+		"5. Next-Day Focus\n"
 		"Do not invent counts or repository names.\n\n"
 		"Context JSON:\n"
 		f"{context_json}\n"
 	)
 	return prompt
+
+
+#============================================
+def is_context_window_error(error: Exception) -> bool:
+	"""
+	Detect model context-window failures from wrapped transport errors.
+	"""
+	text = str(error).lower()
+	if "contextwindowexceedederror" in text:
+		return True
+	if "context window" in text:
+		return True
+	if "exceeded model context window size" in text:
+		return True
+	return False
+
+
+#============================================
+def generate_global_outline_with_retry(
+	client,
+	outline: dict,
+	repo_summaries: list[dict],
+	max_tokens: int,
+) -> str:
+	"""
+	Generate global outline with progressive prompt shrinking on context overflow.
+	"""
+	attempts = [
+		(20, 900),
+		(12, 600),
+		(8, 400),
+		(5, 250),
+	]
+	last_error = None
+	for attempt_index, (repo_limit, excerpt_chars) in enumerate(attempts, start=1):
+		log_step(
+			f"Generating global outline attempt {attempt_index}/{len(attempts)} "
+			+ f"(repo_limit={repo_limit}, excerpt_chars={excerpt_chars})."
+		)
+		prompt = build_global_llm_prompt(
+			outline,
+			repo_summaries,
+			repo_limit=repo_limit,
+			excerpt_chars=excerpt_chars,
+			target_words=DAILY_GLOBAL_TARGET_WORDS,
+		)
+		try:
+			return client.generate(
+				prompt=prompt,
+				purpose="daily global outline",
+				max_tokens=max_tokens,
+			).strip()
+		except RuntimeError as error:
+			last_error = error
+			if not is_context_window_error(error):
+				raise
+			log_step(
+				"Global outline attempt hit context window; retrying with smaller prompt."
+			)
+	if last_error is not None:
+		raise last_error
+	raise RuntimeError("Global outline generation failed without a captured error.")
+
+
+#============================================
+def enforce_global_outline_word_band(
+	client,
+	outline: dict,
+	repo_summaries: list[dict],
+	global_outline: str,
+	max_tokens: int,
+) -> str:
+	"""
+	Enforce 0.5x..2x word band around 2000-word daily target with one retry.
+	"""
+	word_count = count_words(global_outline)
+	min_words = DAILY_GLOBAL_TARGET_WORDS // 2
+	max_words = DAILY_GLOBAL_TARGET_WORDS * 2
+	if min_words <= word_count <= max_words:
+		return global_outline
+	log_step(
+		"Global outline target miss; retrying once "
+		+ f"(words={word_count}, target={DAILY_GLOBAL_TARGET_WORDS})."
+	)
+	retry_prompt = (
+		"Revise this daily global outline while preserving factual details.\n"
+		+ f"Last entry was {word_count} words.\n"
+		+ f"Target about {DAILY_GLOBAL_TARGET_WORDS} words.\n"
+		+ f"Acceptable range: {min_words}-{max_words} words.\n"
+		+ "Please do better on length control.\n\n"
+		+ build_global_llm_prompt(
+			outline,
+			repo_summaries,
+			target_words=DAILY_GLOBAL_TARGET_WORDS,
+		)
+	)
+	return client.generate(
+		prompt=retry_prompt,
+		purpose="daily global outline retry",
+		max_tokens=max_tokens,
+	).strip()
 
 
 #============================================
@@ -364,6 +528,11 @@ def summarize_outline_with_llm(
 	selected_repos = repos
 	if repo_limit > 0:
 		selected_repos = repos[:repo_limit]
+	repo_target_words = compute_repo_outline_target_words(len(selected_repos))
+	log_step(
+		"Computed repo outline target words: "
+		+ f"{repo_target_words} (formula=max(750, ceil(2000/(N-1))), N={len(selected_repos)})"
+	)
 	log_step(f"Summarizing {len(selected_repos)} repo(s) out of {repo_total} total.")
 	cache_hits = 0
 	cached_repo_outlines: dict[str, str] = {}
@@ -388,14 +557,42 @@ def summarize_outline_with_llm(
 			if client is None:
 				client = create_llm_client(transport_name, model_override)
 			log_step(f"Generating repo outline {rank}/{len(selected_repos)}: {repo_name}")
-			prompt = build_repo_llm_prompt(outline, bucket, rank, repo_total)
+			prompt = build_repo_llm_prompt_with_target(
+				outline,
+				bucket,
+				rank,
+				repo_total,
+				repo_target_words,
+			)
 			repo_outline = client.generate(
 				prompt=prompt,
-				purpose="weekly repo outline",
+				purpose="daily repo outline",
 				max_tokens=max_tokens,
 			).strip()
+			repo_word_count = count_words(repo_outline)
+			lower_bound = max(1, repo_target_words // 2)
+			upper_bound = repo_target_words * 2
+			if (repo_word_count < lower_bound) or (repo_word_count > upper_bound):
+				log_step(
+					"Repo outline target miss; retrying once "
+					+ f"({repo_name}: words={repo_word_count}, target={repo_target_words})."
+				)
+				retry_prompt = (
+					"Revise the repo outline while preserving factual details.\n"
+					+ f"Last entry was {repo_word_count} words, target is about {repo_target_words} words.\n"
+					+ "Please do better.\n\n"
+					+ prompt
+				)
+				repo_outline = client.generate(
+					prompt=retry_prompt,
+					purpose="daily repo outline retry",
+					max_tokens=max_tokens,
+				).strip()
 		bucket["llm_repo_outline"] = repo_outline
-		log_step(f"Completed repo outline for {repo_name}; chars={len(repo_outline)}")
+		log_step(
+			f"Completed repo outline for {repo_name}; chars={len(repo_outline)}, "
+			+ f"words={count_words(repo_outline)}, target={repo_target_words}"
+		)
 		repo_summaries.append(
 			{
 				"repo_full_name": bucket.get("repo_full_name", ""),
@@ -404,15 +601,22 @@ def summarize_outline_with_llm(
 			}
 		)
 
-	log_step("Generating global weekly outline from repo summaries.")
+	log_step("Generating global compilation outline from repo summaries.")
 	if client is None:
 		client = create_llm_client(transport_name, model_override)
-	global_prompt = build_global_llm_prompt(outline, repo_summaries)
-	global_outline = client.generate(
-		prompt=global_prompt,
-		purpose="weekly global outline",
+	global_outline = generate_global_outline_with_retry(
+		client,
+		outline,
+		repo_summaries,
 		max_tokens=max_tokens,
-	).strip()
+	)
+	global_outline = enforce_global_outline_word_band(
+		client,
+		outline,
+		repo_summaries,
+		global_outline,
+		max_tokens=max_tokens,
+	)
 	outline["llm_global_outline"] = global_outline
 	outline["llm_repo_summaries_count"] = len(selected_repos)
 	outline["llm_cached_repo_outline_count"] = cache_hits
@@ -596,7 +800,7 @@ def parse_jsonl_to_outline(input_path: str) -> dict:
 #============================================
 def render_outline_text(outline: dict) -> str:
 	"""
-	Render an unlimited-length plain-text outline.
+	Render an unlimited-length Markdown outline.
 	"""
 	user = outline.get("user", "unknown")
 	window_start = outline.get("window_start", "")
@@ -605,58 +809,86 @@ def render_outline_text(outline: dict) -> str:
 	repos = outline.get("repo_activity", [])
 
 	lines = []
-	lines.append("GitHub Weekly Outline")
-	lines.append(f"User: {user}")
-	lines.append(f"Window: {window_start} -> {window_end}")
+	lines.append("# GitHub Daily Outline")
 	lines.append("")
-	lines.append("Totals")
+	lines.append(f"- User: {user}")
+	lines.append(f"- Window: {window_start} -> {window_end}")
+	lines.append("")
+	lines.append("## Totals")
 	lines.append(f"- Repos with activity: {totals.get('repos', 0)}")
 	lines.append(f"- Repo records: {totals.get('repo_records', 0)}")
 	lines.append(f"- Commit records: {totals.get('commit_records', 0)}")
 	lines.append(f"- Issue records: {totals.get('issue_records', 0)}")
 	lines.append(f"- Pull request records: {totals.get('pull_request_records', 0)}")
 	lines.append("")
-	lines.append("Repository Breakdown")
+	lines.append("## Repository Activity")
 
 	for index, bucket in enumerate(repos, 1):
-		lines.append(
-			f"{index}. {bucket.get('repo_full_name', '')} "
-			f"(activity={bucket.get('total_activity', 0)})"
-		)
-		lines.append(f"   - Commits: {bucket.get('commit_count', 0)}")
-		lines.append(f"   - Issues: {bucket.get('issue_count', 0)}")
-		lines.append(f"   - Pull requests: {bucket.get('pull_request_count', 0)}")
+		lines.append(f"### {index}. {bucket.get('repo_full_name', '')}")
+		lines.append(f"- Total activity: {bucket.get('total_activity', 0)}")
+		lines.append(f"- Commits: {bucket.get('commit_count', 0)}")
+		lines.append(f"- Issues: {bucket.get('issue_count', 0)}")
+		lines.append(f"- Pull requests: {bucket.get('pull_request_count', 0)}")
 		description = (bucket.get("description") or "").strip()
 		if description:
-			lines.append(f"   - Description: {description}")
+			lines.append(f"- Description: {description}")
 		language = (bucket.get("language") or "").strip()
 		if language:
-			lines.append(f"   - Language: {language}")
+			lines.append(f"- Language: {language}")
 		if bucket.get("commit_messages"):
-			lines.append("   - Commit messages:")
+			lines.append("- Commit messages:")
 			for commit_message in bucket["commit_messages"]:
-				lines.append(f"     * {commit_message}")
+				lines.append(f"  - {commit_message}")
 		if bucket.get("issue_titles"):
-			lines.append("   - Issues:")
+			lines.append("- Issues:")
 			for title in bucket["issue_titles"]:
-				lines.append(f"     * {title}")
+				lines.append(f"  - {title}")
 		if bucket.get("pull_request_titles"):
-			lines.append("   - Pull requests:")
+			lines.append("- Pull requests:")
 			for title in bucket["pull_request_titles"]:
-				lines.append(f"     * {title}")
+				lines.append(f"  - {title}")
 		lines.append("")
 
-	lines.append("Cross-Repo Commit Highlights")
+	lines.append("## Cross-Repo Commit Highlights")
 	for message in outline.get("notable_commit_messages", []):
 		lines.append(f"- {message}")
 	lines.append("")
 	global_outline = (outline.get("llm_global_outline") or "").strip()
 	if global_outline:
-		lines.append("LLM Weekly Outline")
+		lines.append("## LLM Narrative Outline")
 		lines.append(global_outline)
 
 	rendered = "\n".join(lines).strip() + "\n"
 	return rendered
+
+
+#============================================
+def outline_day_stamp(outline: dict) -> str:
+	"""
+	Resolve YYYY-MM-DD day stamp from outline window end.
+	"""
+	window_end = str(outline.get("window_end", "")).strip()
+	if len(window_end) >= 10 and window_end[4] == "-" and window_end[7] == "-":
+		return window_end[:10]
+	return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+#============================================
+def write_daily_outline_snapshot(outline: dict, daily_outlines_dir: str) -> tuple[str, str]:
+	"""
+	Write one date-stamped daily outline JSON + Markdown snapshot.
+	"""
+	day_stamp = outline_day_stamp(outline)
+	base_dir = os.path.abspath(daily_outlines_dir)
+	os.makedirs(base_dir, exist_ok=True)
+	json_path = os.path.join(base_dir, f"github_outline-{day_stamp}.json")
+	md_path = os.path.join(base_dir, f"github_outline-{day_stamp}.md")
+	with open(json_path, "w", encoding="utf-8") as handle:
+		json.dump(outline, handle, indent=2)
+		handle.write("\n")
+	with open(md_path, "w", encoding="utf-8") as handle:
+		handle.write(render_outline_text(outline))
+	return json_path, md_path
 
 
 #============================================
@@ -848,6 +1080,11 @@ def main() -> None:
 		DEFAULT_REPO_SHARDS_DIR,
 		user,
 	)
+	daily_outlines_dir = pipeline_settings.resolve_user_scoped_out_path(
+		args.daily_outlines_dir,
+		DEFAULT_DAILY_OUTLINES_DIR,
+		user,
+	)
 
 	transport_name = args.llm_transport or default_transport
 	if transport_name not in {"ollama", "apple", "auto"}:
@@ -892,6 +1129,9 @@ def main() -> None:
 		repo_shards_dir,
 		args.skip_repo_shards,
 	)
+	daily_json_path, daily_md_path = write_daily_outline_snapshot(outline, daily_outlines_dir)
+	log_step(f"Wrote daily outline JSON: {daily_json_path}")
+	log_step(f"Wrote daily outline Markdown: {daily_md_path}")
 	log_step("Outline stage complete.")
 
 

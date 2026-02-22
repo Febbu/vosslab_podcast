@@ -224,6 +224,34 @@
   openings.
 - Added `tests/test_outline_to_bluesky_post.py` and `tests/test_outline_to_podcast_script.py` for
   LLM orchestration coverage in non-blog outline stages.
+- `pipeline/outline_to_blog_post.py` prompts now explicitly require first-person singular
+  narrative voice.
+- `pipeline/outline_to_bluesky_post.py` now date-stamps output filenames by default
+  (`bluesky_post-YYYY-MM-DD.txt`).
+- `pipeline/outline_to_podcast_script.py` now date-stamps output filenames by default
+  (`podcast_script-YYYY-MM-DD.txt`).
+- `pipeline/github_data_to_outline.py` now renders Markdown-first daily outlines
+  (`# GitHub Daily Outline`) and writes dated daily snapshots under
+  `out/<user>/daily_outlines/github_outline-YYYY-MM-DD.json|md`.
+- Added `pipeline/outline_compilation.py` to merge daily outlines for
+  `--last-day|--last-week|--last-month`, skip empty days, and emit compiled outputs for downstream
+  stages (`out/<user>/outline.json` and `compilation_outline-<window>-YYYY-MM-DD.md`).
+- `automation/run_local_pipeline.py` now includes the required `outline_compilation` stage and
+  prints final artifact paths at run completion.
+- Default output and cache paths are now user-scoped (`out/<github.username>/...`) across fetch,
+  outline, content, and audio scripts when CLI paths are not explicitly overridden.
+- Added `docs/OUT_DIRECTORY_ORGANIZATION_SPEC.md` and aligned script defaults to the spec.
+- `automation/install_launchd_pipeline.sh` now writes launchd logs to macOS system logs:
+  `~/Library/Logs/vosslab_podcast/launchd/`.
+- `pipeline/podlib/github_client.py` rate-limit messages now log reset as local clock time only
+  (`reset_local=HH:MM:SS`) instead of full UTC datetime.
+- `pipeline/github_data_to_outline.py` global outline generation now handles
+  context-window overflow by shrinking prompt size and retrying automatically.
+- `pipeline/github_data_to_outline.py` now applies long-form daily target guidance:
+  global target ~2000 words with one retry when outside 1000-4000 words, and per-repo target words
+  computed as `max(750, ceil(2000/(N-1)))`.
+- `pipeline/github_data_to_outline.py` global-stage wording now uses daily/compilation labels
+  (removed stale "weekly" wording in progress logs and LLM purpose tags).
 
 ### Validation
 - `python3 -m py_compile fetch_github_data.py outline_github_data.py outline_to_blog_post.py`
@@ -278,6 +306,7 @@
 - `python3.12 -m pytest -q tests/test_outline_parser.py`
 - `python3.12 -m py_compile pipeline/outline_to_blog_post.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py`
 - `python3.12 -m pytest -q tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py` (pass: `5 passed`)
+- `source source_me.sh && pytest tests/` (pass: `377 passed`)
 - `python3.12 pipeline/outline_to_blog_post.py --help`
 - `python3.12 -m py_compile pipeline/fetch_github_data.py pipeline/outline_github_data.py pipeline/outline_to_blog_post.py pipeline/outline_to_bluesky_post.py pipeline/outline_to_podcast_script.py pipeline/script_to_audio_say.py tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py`
 - `python3.12 -m pytest -q tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py` (pass: `19 passed`)

@@ -14,6 +14,7 @@ from podlib import pipeline_text_utils
 WHITESPACE_RE = re.compile(r"\s+")
 SPEAKER_LINE_RE = re.compile(r"^\s*([A-Za-z0-9_ -]+)\s*:\s*(.+?)\s*$")
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+DATE_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 DEFAULT_INPUT_PATH = "out/outline.json"
 DEFAULT_OUTPUT_PATH = "out/podcast_script.txt"
 DEFAULT_REPO_DRAFT_CACHE_DIR = "out/podcast_repo_drafts"
@@ -112,6 +113,34 @@ def load_outline(path: str) -> dict:
 	with open(path, "r", encoding="utf-8") as handle:
 		outline = json.load(handle)
 	return outline
+
+
+#============================================
+def local_date_stamp() -> str:
+	"""
+	Return local-date stamp for filenames.
+	"""
+	return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+#============================================
+def date_stamp_output_path(output_path: str, date_text: str) -> str:
+	"""
+	Ensure podcast script output filename includes one local-date stamp.
+	"""
+	candidate = (output_path or "").strip() or DEFAULT_OUTPUT_PATH
+	candidate = candidate.replace("{date}", date_text)
+	directory, filename = os.path.split(candidate)
+	if not filename:
+		filename = "podcast_script.txt"
+	stem, extension = os.path.splitext(filename)
+	if not extension:
+		extension = ".txt"
+	if DATE_STAMP_RE.search(filename):
+		dated_filename = filename
+	else:
+		dated_filename = f"{stem}-{date_text}{extension}"
+	return os.path.join(directory, dated_filename)
 
 
 #============================================
@@ -850,11 +879,14 @@ def main() -> None:
 		trimmed_lines = trim_lines_to_word_limit(trimmed_lines, args.word_limit)
 		spoken_word_count = count_script_words(trimmed_lines)
 
-	output_path = os.path.abspath(output_path_arg)
+	date_text = local_date_stamp()
+	dated_output = date_stamp_output_path(output_path_arg, date_text)
+	output_path = os.path.abspath(dated_output)
 	output_dir = os.path.dirname(output_path)
 	if output_dir:
 		os.makedirs(output_dir, exist_ok=True)
 	script_text = render_script_text(trimmed_lines)
+	log_step(f"Using local date stamp for podcast script filename: {date_text}")
 	log_step(f"Writing podcast script output to {output_path}")
 	with open(output_path, "w", encoding="utf-8") as handle:
 		handle.write(script_text)

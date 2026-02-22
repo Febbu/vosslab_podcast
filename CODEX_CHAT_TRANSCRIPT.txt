@@ -1070,3 +1070,52 @@ What was tested
 
 Next actions
 1. Optionally add a tiny smoke check in install script to print absolute log folder path after install for quick manual verification.
+
+---
+Session Update: 2026-02-21 (Blog voice + dated artifacts + outline compilation stage)
+
+What changed
+- Updated `/Users/vosslab/nsh/vosslab_podcast/pipeline/outline_to_blog_post.py` prompts to require first-person singular narrative voice.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/pipeline/outline_to_bluesky_post.py` to date-stamp output filename by default (`bluesky_post-YYYY-MM-DD.txt`).
+- Updated `/Users/vosslab/nsh/vosslab_podcast/pipeline/outline_to_podcast_script.py` to date-stamp output filename by default (`podcast_script-YYYY-MM-DD.txt`).
+- Updated `/Users/vosslab/nsh/vosslab_podcast/automation/run_local_pipeline.py`:
+  - added required `outline_compilation` stage,
+  - added end-of-run artifact list output,
+  - artifact list includes expected mp3 path (`podcast_audio-YYYY-MM-DD.mp3`) with not-generated status when absent.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/pipeline/github_data_to_outline.py`:
+  - markdown-oriented rendering (`# GitHub Daily Outline`),
+  - default outline markdown path now `out/.../outline.md`,
+  - writes dated daily snapshots to `out/<user>/daily_outlines/github_outline-YYYY-MM-DD.json|md`.
+- Added new script `/Users/vosslab/nsh/vosslab_podcast/pipeline/outline_compilation.py`:
+  - compiles daily outlines for `--last-day|--last-week|--last-month`,
+  - skips daily outlines with zero repo/commit activity,
+  - writes compiled JSON for downstream (`out/<user>/outline.json`) and dated markdown (`compilation_outline-<window>-YYYY-MM-DD.md`).
+- Updated `/Users/vosslab/nsh/vosslab_podcast/README.md` process flow and output naming to reflect current pipeline scripts and dated artifacts.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/tests/test_outline_parser.py` expectations for markdown daily-outline headings.
+
+What was tested
+- `source source_me.sh && pytest tests/` (pass: `372 passed`)
+
+Next actions
+1. If you want strict day-by-day generation from one multi-day fetch input, wire `run_local_pipeline.py` to iterate `out/<user>/daily_cache/*.jsonl` through `github_data_to_outline.py` before compilation.
+
+---
+Session Update: 2026-02-21 (Daily outline word targets)
+
+What changed
+- Updated `/Users/vosslab/nsh/vosslab_podcast/pipeline/github_data_to_outline.py` word-target behavior:
+  - global daily outline target set to ~2000 words with retry band 1000-4000 words,
+  - per-repo target now computed by formula `max(750, ceil(2000/(N-1)))` where `N` is selected repo count,
+  - removed manual `--llm-repo-target-words` override so formula behavior is consistent,
+  - added prompt guidance and retry logs for off-target repo/global lengths.
+- Adjusted parser test expectations for optional retry purpose labels in
+  `/Users/vosslab/nsh/vosslab_podcast/tests/test_outline_parser.py`.
+- Marked `/Users/vosslab/nsh/vosslab_podcast/pipeline/outline_compilation.py` executable for shebang policy compliance.
+
+What was tested
+- `source source_me.sh && pytest tests/test_outline_parser.py -q` (pass)
+- `source source_me.sh && pytest tests/test_shebangs.py -q` (pass)
+- `source source_me.sh && pytest tests/ -q` (pass: `377 passed`)
+
+Next actions
+1. If desired, expose daily/global target words in settings.yaml while keeping the formula as default behavior.

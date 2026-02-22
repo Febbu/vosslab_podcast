@@ -7,30 +7,30 @@ Directory layout contract: [docs/OUT_DIRECTORY_ORGANIZATION_SPEC.md](docs/OUT_DI
 ## Process flow
 1. `pipeline/fetch_github_data.py`
 - Fetch all relevant GitHub activity data and write a large JSONL file.
-2. `pipeline/outline_github_data.py`
-- Parse the large JSONL file and write a summary outline (no length limit).
-3. Content generation from outline
+2. `pipeline/github_data_to_outline.py`
+- Parse GitHub JSONL and write a daily outline plus daily snapshot files.
+3. `pipeline/outline_compilation.py`
+- Compile daily outline snapshots into one requested-period compilation outline.
+4. Content generation from outline
 - `pipeline/outline_to_blog_post.py`: write an LLM-generated Markdown blog post for MkDocs (target 500 words).
 - `pipeline/outline_to_bluesky_post.py`: write an LLM-generated Bluesky post (target 140 characters; final output is publish-safe trimmed).
 - `pipeline/outline_to_podcast_script.py`: write an LLM-generated N-speaker podcast script (target 500 words; final output is trimmed to fit).
-4. Audio rendering
+5. Audio rendering
 - `pipeline/script_to_audio.py`: multi-speaker Qwen TTS (`out/episode.wav`).
 - `pipeline/script_to_audio_say.py`: single-speaker macOS `say`/Siri-style render (`out/episode_siri.aiff`).
 
 ## Output files
-- `out/github_data.jsonl` (raw collected GitHub data)
-- `out/daily_cache/github_data_YYYY-MM-DD.jsonl` (one cache JSONL per day in window)
-- `out/outline.json` and `out/outline.txt` (summary outline)
-- `out/outline_repos/index.json` (manifest of per-repo outline shards)
-- `out/outline_repos/*.json` and `out/outline_repos/*.txt` (one shard per repo)
-- `out/blog_post_YYYY-MM-DD.md` (Markdown blog post, date-stamped filename, target 500 words)
-- `out/bluesky_post.txt` (<= 140 characters)
-- `out/podcast_script.txt` (<= 500 words, N speakers)
-- `out/blog_repo_drafts/*.json` (per-repo cached blog intermediate drafts)
-- `out/bluesky_repo_drafts/*.json` (per-repo cached Bluesky intermediate drafts)
-- `out/podcast_repo_drafts/*.json` (per-repo cached podcast intermediate drafts)
-- `out/episode.wav` (or equivalent audio output)
-- `out/episode_siri.aiff` (optional single-speaker macOS `say` output)
+- Default outputs are user-scoped under `out/<github_username>/...`.
+- `out/<user>/github_data_YYYY-MM-DD.jsonl` (raw collected GitHub data)
+- `out/<user>/daily_cache/github_data_YYYY-MM-DD.jsonl` (one cache JSONL per day in window)
+- `out/<user>/daily_outlines/github_outline-YYYY-MM-DD.json` and `.md` (daily outline snapshots)
+- `out/<user>/outline.json` (compiled outline JSON passed to downstream stages)
+- `out/<user>/compilation_outline-<window>-YYYY-MM-DD.md` (compiled outline Markdown)
+- `out/<user>/blog_post_YYYY-MM-DD.md` (Markdown blog post, target 500 words)
+- `out/<user>/bluesky_post-YYYY-MM-DD.txt` (target 140 characters)
+- `out/<user>/podcast_script-YYYY-MM-DD.txt` (target 500 words, N speakers)
+- `out/<user>/episode.wav` (or equivalent audio output)
+- `out/<user>/episode_siri.aiff` (optional single-speaker macOS `say` output)
 
 ## Usage (local)
 ```bash
@@ -38,7 +38,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r pip_requirements.txt
 python pipeline/fetch_github_data.py --settings settings.yaml --last-week
-python pipeline/outline_github_data.py --settings settings.yaml --repo-shards-dir out/outline_repos
+python pipeline/github_data_to_outline.py --settings settings.yaml
+python pipeline/outline_compilation.py --settings settings.yaml --last-week
 python pipeline/outline_to_blog_post.py
 python pipeline/outline_to_bluesky_post.py
 python pipeline/outline_to_podcast_script.py --num-speakers 3
