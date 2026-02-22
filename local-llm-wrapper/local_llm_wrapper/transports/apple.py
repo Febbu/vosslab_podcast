@@ -9,8 +9,22 @@ import platform
 import time
 
 # local repo modules
-from local_llm_wrapper.errors import GuardrailRefusalError, TransportUnavailableError
+from local_llm_wrapper.errors import ContextWindowError, GuardrailRefusalError, TransportUnavailableError
 from local_llm_wrapper.llm_utils import MIN_MACOS_MAJOR, _parse_macos_version
+
+
+#============================================
+def _is_context_window_exc(exc: Exception) -> bool:
+	"""
+	Return True when the exception signals a context window overflow.
+	"""
+	name = exc.__class__.__name__.lower()
+	message = str(exc).lower()
+	if "contextwindow" in name:
+		return True
+	if "context window" in message or "context length" in message:
+		return True
+	return False
 
 
 class AppleTransport:
@@ -73,6 +87,11 @@ class AppleTransport:
 			except GuardrailViolationError as exc:
 				raise GuardrailRefusalError(str(exc)) from exc
 			except Exception as exc:
+				# surface context window errors so the engine can detect and handle them
+				if _is_context_window_exc(exc):
+					raise ContextWindowError(
+						f"Apple LLM context window exceeded (prompt ~{len(prompt)} chars)."
+					) from exc
 				last_error = exc
 				if attempt < self.max_retries:
 					time.sleep(attempt)

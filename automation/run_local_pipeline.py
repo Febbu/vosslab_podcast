@@ -191,6 +191,15 @@ def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]
 			],
 		),
 		(
+			"changelog_summarize",
+			[
+				"python3",
+				"pipeline/summarize_changelog_data.py",
+				"--settings",
+				args.settings,
+			],
+		),
+		(
 			"outline",
 			[
 				"python3",

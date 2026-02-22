@@ -1,6 +1,54 @@
 ## 2026-02-22
 
 ### Additions and New Features
+- Added `pipeline/summarize_changelog_data.py` as a new pipeline stage between fetch and outline.
+  Reads the fetch JSONL, summarizes `repo_changelog` entries exceeding 6000 chars via
+  `changelog_summarizer.summarize_long_changelog()`, and writes the updated JSONL back atomically.
+  This caches the summarized output so re-running the outline stage no longer re-summarizes.
+- Wired `changelog_summarize` stage into `automation/run_local_pipeline.py` between the `fetch`
+  and `outline` stages.
+- Added `tests/test_summarize_changelog_data.py` with 3 tests: long entry replacement via mock LLM,
+  passthrough for short entries, and non-changelog record preservation.
+
+### Behavior or Interface Changes
+- Removed `summarize_bucket_changelogs()` call and `import changelog_summarizer` from
+  `pipeline/github_data_to_outline.py`. The outline stage now expects already-summarized JSONL
+  from the new `summarize_changelog_data` stage, eliminating repeated LLM summarization at depth 2+.
+- Added `pipeline/changelog_summarizer.py` with `chunk_text()`, `summarize_changelog_chunks()`,
+  `summarize_long_changelog()`, and `summarize_bucket_changelogs()`. When a changelog entry
+  exceeds 6000 chars, it is split into overlapping chunks (3000 chars, 500 overlap), each chunk
+  is summarized via the LLM, and the summaries are concatenated. This replaces hard truncation
+  with a shorter but more complete representation of long changelogs.
+- Added `pipeline/prompts/changelog_chunk_summary.txt` prompt template for changelog chunk
+  summarization, instructing the LLM to keep file names, function names, commit subjects, and
+  PR numbers while removing boilerplate.
+- `pipeline/github_data_to_outline.py` `_generate_one_repo_draft()` now calls
+  `summarize_bucket_changelogs()` before building the LLM prompt, so repos with large changelogs
+  get summarized content instead of truncated text.
+- Added `tests/test_changelog_summarizer.py` with 7 tests covering chunk splitting (basic, short,
+  empty, overlap verification), passthrough for short text, mock LLM summarization, and in-place
+  bucket mutation.
+- Per-repo outline generation now uses the depth pipeline at depth 2+. At depth 1, behavior is
+  unchanged (single draft). At depth 2-3, multiple drafts are generated and polished. At depth 4,
+  drafts go through referee brackets before polish. Extracted `_generate_one_repo_draft()` and
+  `_generate_repo_outline_with_depth()` in `pipeline/github_data_to_outline.py`.
+- Added `compute_scaled_repo_targets()` to `pipeline/outline_to_blog_post.py` that computes
+  per-repo blog word targets proportional to each repo's `llm_repo_outline` word count (66% scale
+  factor, 100-word floor). When outlines are present, repos with richer outlines get larger blog
+  targets instead of even division. Falls back to uniform targets when no outlines exist.
+- `pipeline/outline_compilation.py` `merge_repo_activity()` now preserves `llm_repo_outline` on
+  each repo bucket, keeping the longest outline when merging multiple days for the same repo.
+- `pipeline/outline_compilation.py` `compile_outlines()` now preserves `llm_global_outline` in the
+  compiled output, keeping the longest global outline across merged days.
+- `pipeline/outline_to_blog_post.py` `build_repo_blog_markdown_prompt()` now includes
+  `repo_outline` and `global_outline_summary` (trimmed to 1500 chars) in the prompt context when
+  available, giving the LLM outline-guided emphasis for each repo draft.
+- Updated `pipeline/prompts/blog_repo_markdown.txt` with instructions to use `repo_outline` as
+  primary emphasis guide and `global_outline_summary` for cross-repo context.
+- Added `tests/test_outline_compilation.py` with 2 tests for outline preservation through
+  compilation merges.
+- Added 5 tests to `tests/test_outline_to_blog_post.py` for scaled repo targets (proportional,
+  normalization, empty outlines, single repo) and outline context in prompts.
 - Added [docs/DESIGN_PHILOSOPHY.md](docs/DESIGN_PHILOSOPHY.md) documenting the pipeline's core
   design principles: cheap-but-mediocre local models, patience-for-quality tradeoff, caching for
   resilience, the depth system (1-4), referee pattern, and anti-hallucination guardrails.
@@ -40,6 +88,16 @@
   single-date parsing, empty input, window filtering, and no-match edge cases.
 
 ### Fixes and Maintenance
+- Fixed Apple Foundation Models transport (`local-llm-wrapper/local_llm_wrapper/transports/apple.py`)
+  to raise `ContextWindowError` instead of generic `RuntimeError` when the prompt exceeds the
+  model context window. Previously the engine's fallback logic could not detect context window
+  errors from the Apple transport because the original exception was wrapped in a generic message.
+- Fixed `pipeline/github_data_to_outline.py` to catch `ContextWindowError` during repo outline
+  generation and retry with a trimmed changelog (6000 char budget instead of 8000). This prevents
+  depth-4 runs from crashing on repos with large changelogs like bkchem (8003 changelog chars).
+- `build_repo_context()` and `build_repo_llm_prompt_with_target()` in
+  `pipeline/github_data_to_outline.py` now accept a `changelog_char_budget` parameter to control
+  changelog truncation for context-window-constrained retries.
 - Fixed changelog record `event_time` to use noon UTC (`T12:00:00+00:00`) instead of midnight
   so day-key bucketing lands on the correct date regardless of local timezone reset hour offset.
 - `build_changelog_records()` now filters by UTC calendar dates the window spans (via
@@ -67,6 +125,10 @@
 - Global outline log now reports total input size (chars and words) from repo summaries.
 
 ### Behavior or Interface Changes
+- Context window retry for repo outlines now trims changelog to 6000 chars (25% reduction from the
+  8000 default) instead of the previous 2000 chars (75% reduction).
+- Repo outline log messages now show the depth value:
+  `Generating repo outline 1/5: repo (target=N words, depth=D)`.
 - All 12 prompt render call sites across `github_data_to_outline.py`, `outline_to_blog_post.py`,
   `blog_to_podcast_script.py`, and `blog_to_bluesky_post.py` switched from `render_prompt()` to
   `render_prompt_with_target()` for consistent closing target reminders.

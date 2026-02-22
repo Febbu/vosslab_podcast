@@ -180,7 +180,7 @@ def resolve_latest_fetch_input(input_path: str) -> str:
 def _truncate_changelog_entries(
 	entries: list[dict],
 	max_entries: int = 3,
-	total_char_budget: int = 8000,
+	total_char_budget: int = 2500,
 ) -> list[dict]:
 	"""
 	Limit changelog entries for LLM context to avoid blowing the context window.
@@ -210,9 +210,13 @@ def _truncate_changelog_entries(
 
 
 #============================================
-def build_repo_context(bucket: dict) -> dict:
+def build_repo_context(bucket: dict, changelog_char_budget: int = 8000) -> dict:
 	"""
 	Build compact repo context for LLM prompts.
+
+	Args:
+		bucket: repo activity bucket with commit_messages, changelog_entries, etc.
+		changelog_char_budget: max chars for changelog entries (default 8000).
 	"""
 	context = {
 		"repo_full_name": bucket.get("repo_full_name", ""),
@@ -229,6 +233,7 @@ def build_repo_context(bucket: dict) -> dict:
 		"pull_request_titles": list(bucket.get("pull_request_titles", []))[:30],
 		"changelog_entries": _truncate_changelog_entries(
 			bucket.get("changelog_entries", []),
+			total_char_budget=changelog_char_budget,
 		),
 	}
 	return context
@@ -256,11 +261,18 @@ def build_repo_llm_prompt_with_target(
 	outline: dict,
 	bucket: dict,
 	target_words: int,
+	changelog_char_budget: int = 8000,
 ) -> str:
 	"""
 	Build one repo-specific LLM prompt with target word guidance.
+
+	Args:
+		outline: full outline dict.
+		bucket: repo activity bucket.
+		target_words: target word count for the outline.
+		changelog_char_budget: max chars for changelog entries (default 8000).
 	"""
-	context = build_repo_context(bucket)
+	context = build_repo_context(bucket, changelog_char_budget=changelog_char_budget)
 	context_json = json.dumps(context, ensure_ascii=True, indent=2)
 	template = prompt_loader.load_prompt("outline_repo_targeted.txt")
 	prompt = prompt_loader.render_prompt_with_target(template, {
@@ -647,6 +659,121 @@ def load_cached_repo_outline_map(repo_shards_dir: str, outline: dict) -> dict[st
 
 
 #============================================
+def _generate_one_repo_draft(
+	client,
+	outline: dict,
+	bucket: dict,
+	scaled_target: int,
+	max_tokens: int,
+	repo_name: str,
+) -> str:
+	"""
+	Generate one repo outline draft with context window retry.
+	"""
+	from local_llm_wrapper.errors import ContextWindowError
+	prompt = build_repo_llm_prompt_with_target(outline, bucket, scaled_target)
+	try:
+		draft = client.generate(
+			prompt=prompt,
+			purpose="daily repo outline",
+			max_tokens=max_tokens,
+		).strip()
+	except (ContextWindowError, RuntimeError) as exc:
+		if "context window" not in str(exc).lower():
+			raise
+		log_step(
+			f"Context window exceeded for {repo_name} "
+			+ f"(prompt ~{len(prompt)} chars); retrying with trimmed changelog."
+		)
+		# rebuild prompt with 25% trimmed changelog
+		prompt = build_repo_llm_prompt_with_target(
+			outline, bucket, scaled_target, changelog_char_budget=6000,
+		)
+		draft = client.generate(
+			prompt=prompt,
+			purpose="daily repo outline (trimmed)",
+			max_tokens=max_tokens,
+		).strip()
+	draft = outline_llm.strip_xml_wrapper(draft)
+	# enforce word band with one retry
+	word_count = count_words(draft)
+	lower_bound = max(1, scaled_target // 2)
+	upper_bound = scaled_target * 2
+	if (word_count < lower_bound) or (word_count > upper_bound):
+		log_step(
+			"Repo outline target miss; retrying once "
+			+ f"({repo_name}: words={word_count}, target={scaled_target})."
+		)
+		retry_prompt = (
+			f"Your outline was {word_count} words. "
+			+ f"Rewrite to about {scaled_target} words.\n\n"
+			+ prompt
+		)
+		draft = client.generate(
+			prompt=retry_prompt,
+			purpose="daily repo outline retry",
+			max_tokens=max_tokens,
+		).strip()
+		draft = outline_llm.strip_xml_wrapper(draft)
+	return draft
+
+
+#============================================
+def _generate_repo_outline_with_depth(
+	client,
+	outline: dict,
+	bucket: dict,
+	scaled_target: int,
+	max_tokens: int,
+	depth: int,
+	repo_name: str,
+	repo_shards_dir: str,
+	continue_mode: bool,
+) -> str:
+	"""
+	Generate repo outline using the depth pipeline for multi-draft quality.
+
+	At depth 1, runs a single draft. At depth 2+, generates multiple drafts
+	and applies polish (and referee at depth 4) via depth_orchestrator.
+	"""
+	if depth <= 1:
+		# single-pass: generate one draft directly
+		result = _generate_one_repo_draft(
+			client, outline, bucket, scaled_target, max_tokens, repo_name,
+		)
+		return result
+
+	# depth 2+: use depth pipeline for multi-draft generation
+	repo_slug = sanitize_repo_slug(repo_name)
+
+	def _gen_draft() -> str:
+		return _generate_one_repo_draft(
+			client, outline, bucket, scaled_target, max_tokens, repo_name,
+		)
+
+	def _referee(draft_a: str, draft_b: str) -> str:
+		return _referee_outline(client, draft_a, draft_b, max_tokens)
+
+	def _polish(drafts: list, d: int) -> str:
+		return _polish_outline(client, drafts, d, scaled_target, max_tokens)
+
+	depth_cache_dir = os.path.join(os.path.abspath(repo_shards_dir), "depth_cache")
+	result = depth_orchestrator.run_depth_pipeline(
+		generate_draft_fn=_gen_draft,
+		referee_fn=_referee,
+		polish_fn=_polish,
+		depth=depth,
+		cache_dir=depth_cache_dir,
+		cache_key_prefix=f"outline_repo_{repo_slug}",
+		continue_mode=continue_mode,
+		max_tokens=max_tokens,
+		quality_check_fn=outline_quality_issue,
+		logger=log_step,
+	)
+	return result
+
+
+#============================================
 def summarize_outline_with_llm(
 	outline: dict,
 	*,
@@ -730,38 +857,19 @@ def summarize_outline_with_llm(
 				client = create_llm_client(transport_name, model_override)
 			log_step(
 				f"Generating repo outline {rank}/{len(selected_repos)}: "
-				+ f"{repo_name} (target={scaled_target} words)"
+				+ f"{repo_name} (target={scaled_target} words, depth={depth})"
 			)
-			prompt = build_repo_llm_prompt_with_target(
-				outline,
-				bucket,
-				scaled_target,
-			)
-			repo_outline = client.generate(
-				prompt=prompt,
-				purpose="daily repo outline",
+			repo_outline = _generate_repo_outline_with_depth(
+				client=client,
+				outline=outline,
+				bucket=bucket,
+				scaled_target=scaled_target,
 				max_tokens=max_tokens,
-			).strip()
-			repo_outline = outline_llm.strip_xml_wrapper(repo_outline)
-			repo_word_count = count_words(repo_outline)
-			lower_bound = max(1, scaled_target // 2)
-			upper_bound = scaled_target * 2
-			if (repo_word_count < lower_bound) or (repo_word_count > upper_bound):
-				log_step(
-					"Repo outline target miss; retrying once "
-					+ f"({repo_name}: words={repo_word_count}, target={scaled_target})."
-				)
-				retry_prompt = (
-					f"Your outline was {repo_word_count} words. "
-					+ f"Rewrite to about {scaled_target} words.\n\n"
-					+ prompt
-				)
-				repo_outline = client.generate(
-					prompt=retry_prompt,
-					purpose="daily repo outline retry",
-					max_tokens=max_tokens,
-				).strip()
-				repo_outline = outline_llm.strip_xml_wrapper(repo_outline)
+				depth=depth,
+				repo_name=repo_name,
+				repo_shards_dir=repo_shards_dir,
+				continue_mode=continue_mode,
+			)
 		bucket["llm_repo_outline"] = repo_outline
 		log_step(
 			f"Completed repo outline for {repo_name}; chars={len(repo_outline)}, "

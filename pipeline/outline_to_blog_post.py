@@ -188,6 +188,49 @@ def compute_repo_pass_word_target(repo_count: int, word_limit: int) -> int:
 
 
 #============================================
+def compute_scaled_repo_targets(
+	repo_buckets: list[dict],
+	word_limit: int,
+	scale_factor: float = 0.66,
+	min_words: int = 100,
+) -> list[int]:
+	"""
+	Compute per-repo blog word targets proportional to outline size.
+
+	Each repo's raw target is scale_factor of its llm_repo_outline word count.
+	A minimum floor of min_words applies per repo. If the sum exceeds
+	word_limit, targets are normalized proportionally while preserving floor.
+
+	Args:
+		repo_buckets: list of repo activity dicts with optional llm_repo_outline
+		word_limit: total word budget across all repos
+		scale_factor: fraction of outline word count to use as raw target
+		min_words: minimum word target per repo
+
+	Returns:
+		list of integer word targets, one per repo bucket
+	"""
+	# compute raw targets from outline word counts
+	raw_targets: list[float] = []
+	for bucket in repo_buckets:
+		outline_text = str(bucket.get("llm_repo_outline", "") or "").strip()
+		outline_words = pipeline_text_utils.count_words(outline_text)
+		raw = max(min_words, outline_words * scale_factor)
+		raw_targets.append(raw)
+	raw_sum = sum(raw_targets)
+	# if total fits within budget, round and return
+	if raw_sum <= word_limit:
+		return [max(min_words, int(round(t))) for t in raw_targets]
+	# normalize proportionally while preserving floor
+	scaled: list[int] = []
+	for raw in raw_targets:
+		proportion = raw / raw_sum
+		target = max(min_words, int(round(proportion * word_limit)))
+		scaled.append(target)
+	return scaled
+
+
+#============================================
 def build_blog_markdown_prompt(outline: dict, word_limit: int) -> str:
 	"""
 	Build fallback prompt for human-readable Markdown blog generation.
@@ -236,6 +279,16 @@ def build_repo_blog_markdown_prompt(
 		"overall_totals": outline.get("totals", {}),
 		"top_notable_commit_messages": list(outline.get("notable_commit_messages", []))[:12],
 	}
+	# include repo outline when available
+	repo_outline_text = str(repo_bucket.get("llm_repo_outline", "") or "").strip()
+	if repo_outline_text:
+		repo_context["repo_outline"] = repo_outline_text
+	# include trimmed global outline for cross-repo context
+	global_outline_text = str(outline.get("llm_global_outline", "") or "").strip()
+	if global_outline_text:
+		repo_context["global_outline_summary"] = pipeline_text_utils.trim_to_char_limit(
+			global_outline_text, 1500
+		)
 	context_json = json.dumps(repo_context, ensure_ascii=True, indent=2)
 	template = prompt_loader.load_prompt("blog_repo_markdown.txt")
 	prompt = prompt_loader.render_prompt_with_target(template, {
@@ -519,13 +572,29 @@ def generate_blog_markdown_with_llm(
 
 	candidate_drafts: list[dict] = []
 	if repo_total > 0:
-		repo_word_target = compute_repo_pass_word_target(repo_total, word_limit)
-		if logger:
-			logger(
-				"Running incremental repo drafts: "
-				+ f"{repo_total} draft(s), per-repo target={repo_word_target} words."
-			)
+		# check if any repo has outline data for scaled targets
+		has_outlines = any(
+			str(b.get("llm_repo_outline", "") or "").strip()
+			for b in repo_buckets
+		)
+		if has_outlines:
+			repo_word_targets = compute_scaled_repo_targets(repo_buckets, word_limit)
+			if logger:
+				target_summary = ", ".join(
+					f"{b.get('repo_full_name', '?')}={t}"
+					for b, t in zip(repo_buckets, repo_word_targets)
+				)
+				logger(f"Using outline-scaled repo targets: {target_summary}")
+		else:
+			uniform_target = compute_repo_pass_word_target(repo_total, word_limit)
+			repo_word_targets = [uniform_target] * repo_total
+			if logger:
+				logger(
+					"Running incremental repo drafts: "
+					+ f"{repo_total} draft(s), per-repo target={uniform_target} words."
+				)
 		for index, repo_bucket in enumerate(repo_buckets, start=1):
+			repo_word_target = repo_word_targets[index - 1]
 			repo_name = repo_bucket.get("repo_full_name", "")
 			cache_path = outline_draft_cache.build_cache_path(
 				repo_draft_cache_dir,

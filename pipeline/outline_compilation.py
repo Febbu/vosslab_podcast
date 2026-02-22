@@ -202,6 +202,11 @@ def merge_repo_activity(merged_repos: dict[str, dict], bucket: dict) -> None:
 	target["total_activity"] = (
 		target["commit_count"] + target["issue_count"] + target["pull_request_count"]
 	)
+	# preserve llm_repo_outline, keeping the longest across merged days
+	incoming_outline = str(bucket.get("llm_repo_outline", "") or "").strip()
+	existing_outline = str(target.get("llm_repo_outline", "") or "").strip()
+	if len(incoming_outline) > len(existing_outline):
+		target["llm_repo_outline"] = incoming_outline
 
 
 #============================================
@@ -211,6 +216,7 @@ def compile_outlines(outlines: list[dict]) -> dict:
 	"""
 	merged_repos: dict[str, dict] = {}
 	notable_messages: list[str] = []
+	best_global_outline = ""
 	user = "unknown"
 	window_start = ""
 	window_end = ""
@@ -237,6 +243,10 @@ def compile_outlines(outlines: list[dict]) -> dict:
 		for message in list(outline.get("notable_commit_messages", [])):
 			if message and (message not in notable_messages):
 				notable_messages.append(message)
+		# keep the longest global outline across merged days
+		candidate_global = str(outline.get("llm_global_outline", "") or "").strip()
+		if len(candidate_global) > len(best_global_outline):
+			best_global_outline = candidate_global
 
 	repo_list = list(merged_repos.values())
 	repo_list.sort(
@@ -259,6 +269,7 @@ def compile_outlines(outlines: list[dict]) -> dict:
 		},
 		"repo_activity": repo_list,
 		"notable_commit_messages": notable_messages[:50],
+		"llm_global_outline": best_global_outline,
 	}
 
 

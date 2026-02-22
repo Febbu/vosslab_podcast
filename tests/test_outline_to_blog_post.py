@@ -217,3 +217,80 @@ def test_date_stamp_output_path_keeps_existing_date() -> None:
 		"2026-02-22",
 	)
 	assert path.endswith("out/blog_post_2026-02-22.md")
+
+
+#============================================
+def test_compute_scaled_repo_targets_proportional() -> None:
+	"""
+	Two repos with different outline sizes should get proportional targets.
+	"""
+	buckets = [
+		{"llm_repo_outline": "word " * 300},
+		{"llm_repo_outline": "word " * 100},
+	]
+	targets = outline_to_blog_post.compute_scaled_repo_targets(buckets, 500)
+	assert len(targets) == 2
+	# repo with 300 words should get a larger target than repo with 100
+	assert targets[0] > targets[1]
+	# both should be positive integers
+	assert all(t >= 100 for t in targets)
+
+
+#============================================
+def test_compute_scaled_repo_targets_normalization() -> None:
+	"""
+	Three large repos should have their targets capped to word_limit.
+	"""
+	buckets = [
+		{"llm_repo_outline": "word " * 500},
+		{"llm_repo_outline": "word " * 400},
+		{"llm_repo_outline": "word " * 300},
+	]
+	targets = outline_to_blog_post.compute_scaled_repo_targets(buckets, 400)
+	assert len(targets) == 3
+	# sum should not vastly exceed word_limit (rounding may cause minor overshoot)
+	assert sum(targets) <= 400 + len(targets)
+
+
+#============================================
+def test_compute_scaled_repo_targets_empty_outlines() -> None:
+	"""
+	Empty outlines should hit min_words floor.
+	"""
+	buckets = [
+		{"llm_repo_outline": ""},
+		{"llm_repo_outline": ""},
+	]
+	targets = outline_to_blog_post.compute_scaled_repo_targets(buckets, 500)
+	assert targets == [100, 100]
+
+
+#============================================
+def test_compute_scaled_repo_targets_single_repo() -> None:
+	"""
+	Single repo should get 66% of its outline word count.
+	"""
+	buckets = [
+		{"llm_repo_outline": "word " * 200},
+	]
+	targets = outline_to_blog_post.compute_scaled_repo_targets(buckets, 500)
+	assert len(targets) == 1
+	# 200 * 0.66 = 132, should be close to that
+	assert 125 <= targets[0] <= 140
+
+
+#============================================
+def test_build_repo_blog_markdown_prompt_includes_outline() -> None:
+	"""
+	Prompt context should include repo_outline and global_outline_summary.
+	"""
+	outline = sample_outline()
+	outline["llm_global_outline"] = "This is the global outline summary text."
+	repo_bucket = outline["repo_activity"][0]
+	repo_bucket["llm_repo_outline"] = "Alpha repo had major refactoring work."
+	prompt = outline_to_blog_post.build_repo_blog_markdown_prompt(
+		outline, repo_bucket, 1, 1, 200,
+	)
+	assert "Alpha repo had major refactoring work" in prompt
+	assert "global outline summary text" in prompt
+	assert "repo_outline" in prompt

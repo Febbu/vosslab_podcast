@@ -1,0 +1,3 @@
+Summarize the following changelog section. Keep specific file names, function names, commit subjects, PR numbers, and concrete changes. Remove boilerplate headings and redundant formatting. Output plain text, one paragraph.
+
+{{chunk_text}}

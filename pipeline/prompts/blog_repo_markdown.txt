@@ -22,6 +22,12 @@ Avoid:
 - Writing advice, templates, or educational meta-content about blogging.
 - Reader call-to-action (comments, follow, subscribe, etc.).
 
+If 'repo_outline' is present in the context, use it as your primary guide for
+what to emphasize and how to structure the draft. Rewrite the outline points
+as natural blog prose in your own words.
+If 'global_outline_summary' is present, use it to understand how this repo
+fits relative to other repos being covered. Focus only on this repo.
+
 Context JSON:
 {{context_json}}
 Example of good output style (do not copy this content, use the actual data):
