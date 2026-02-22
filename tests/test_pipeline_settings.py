@@ -11,7 +11,7 @@ PIPELINE_DIR = os.path.join(REPO_ROOT, "pipeline")
 if PIPELINE_DIR not in sys.path:
 	sys.path.insert(0, PIPELINE_DIR)
 
-import pipeline_settings
+from podlib import pipeline_settings
 
 
 #============================================

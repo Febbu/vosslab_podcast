@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Standardized exception types for the LLM wrapper.
 """

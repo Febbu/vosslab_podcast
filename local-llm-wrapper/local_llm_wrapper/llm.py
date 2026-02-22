@@ -1,26 +1,25 @@
-#!/usr/bin/env python3
 """
 Compatibility exports for LLM utilities and engine.
 """
 
 from __future__ import annotations
 
-from .errors import (
+from local_llm_wrapper.errors import (
 	ContextWindowError,
 	GuardrailRefusalError,
 	LLMError,
 	TransportUnavailableError,
 )
-from .llm_client import LLMClient
-from .llm_parsers import RenameResult, SortResult
-from .llm_utils import (
+from local_llm_wrapper.llm_client import LLMClient
+from local_llm_wrapper.llm_parsers import RenameResult, SortResult
+from local_llm_wrapper.llm_utils import (
 	apple_models_available,
 	get_vram_size_in_gb as _get_vram_size_in_gb,
 	total_ram_bytes as _total_ram_bytes,
 	sanitize_filename,
 )
-from .transports.apple import AppleTransport
-from .transports.ollama import OllamaTransport
+from local_llm_wrapper.transports.apple import AppleTransport
+from local_llm_wrapper.transports.ollama import OllamaTransport
 
 def get_vram_size_in_gb() -> int | None:
 	return _get_vram_size_in_gb()
@@ -34,7 +33,7 @@ def choose_model(model_override: str | None) -> str:
 	"""
 	Compatibility wrapper so tests can monkeypatch get_vram_size_in_gb/total_ram_bytes.
 	"""
-	from .llm_utils import choose_model as _choose_model
+	from local_llm_wrapper.llm_utils import choose_model as _choose_model
 
 	original_vram = _get_vram_size_in_gb
 	original_ram = _total_ram_bytes

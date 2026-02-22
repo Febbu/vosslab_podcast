@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import time
 from datetime import datetime
 from datetime import timezone
@@ -52,6 +51,38 @@ class GitHubClient:
 		return value.astimezone(timezone.utc)
 
 	#============================================
+	def parse_rate_limit_reset(self, reset_value) -> datetime:
+		"""
+		Normalize PyGithub reset values to timezone-aware UTC datetime.
+		"""
+		if isinstance(reset_value, datetime):
+			return self.normalize_datetime(reset_value)
+		if isinstance(reset_value, (int, float)):
+			return datetime.fromtimestamp(float(reset_value), tz=timezone.utc)
+		if isinstance(reset_value, str):
+			return datetime.fromisoformat(reset_value.replace("Z", "+00:00"))
+		raise RuntimeError(f"Unsupported rate-limit reset value: {reset_value!r}")
+
+	#============================================
+	def get_core_rate_limit_snapshot(self) -> tuple[int, datetime]:
+		"""
+		Read core rate-limit remaining/reset across PyGithub versions.
+		"""
+		overview = self.client.get_rate_limit()
+		rate_limit = getattr(overview, "core", None)
+		if rate_limit is None:
+			resources = getattr(overview, "resources", None)
+			if isinstance(resources, dict):
+				rate_limit = resources.get("core")
+			elif resources is not None:
+				rate_limit = getattr(resources, "core", None)
+		if rate_limit is None:
+			raise RuntimeError("Rate limit data does not expose core resource fields.")
+		remaining = int(getattr(rate_limit, "remaining"))
+		reset_time = self.parse_rate_limit_reset(getattr(rate_limit, "reset"))
+		return remaining, reset_time
+
+	#============================================
 	def maybe_wait_for_rate_limit(self, context: str, force: bool = False) -> None:
 		"""
 		Sleep until reset when rate limit is very low.
@@ -59,9 +90,11 @@ class GitHubClient:
 		self._rate_check_count += 1
 		if (not force) and (self._rate_check_count % 15 != 0):
 			return
-		rate_limit = self.client.get_rate_limit().core
-		reset_time = self.normalize_datetime(rate_limit.reset)
-		remaining = rate_limit.remaining
+		try:
+			remaining, reset_time = self.get_core_rate_limit_snapshot()
+		except Exception as error:
+			self.log(f"Rate limit check ({context}) unavailable: {error}")
+			return
 		self.log(
 			f"Rate limit check ({context}): remaining={remaining}, "
 			+ f"reset_at={reset_time.isoformat()}"
@@ -87,10 +120,9 @@ class GitHubClient:
 		reset_text = "unknown"
 		remaining_text = "unknown"
 		try:
-			rate_limit = self.client.get_rate_limit().core
-			reset_time = self.normalize_datetime(rate_limit.reset)
+			remaining, reset_time = self.get_core_rate_limit_snapshot()
 			reset_text = reset_time.isoformat()
-			remaining_text = str(rate_limit.remaining)
+			remaining_text = str(remaining)
 		except Exception:
 			pass
 		raise RateLimitError(

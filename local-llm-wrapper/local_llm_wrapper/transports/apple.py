@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Apple Foundation Models transport.
 """
@@ -10,8 +9,8 @@ import platform
 import time
 
 # local repo modules
-from ..errors import GuardrailRefusalError, TransportUnavailableError
-from ..llm_utils import MIN_MACOS_MAJOR, _parse_macos_version
+from local_llm_wrapper.errors import GuardrailRefusalError, TransportUnavailableError
+from local_llm_wrapper.llm_utils import MIN_MACOS_MAJOR, _parse_macos_version
 
 
 class AppleTransport:

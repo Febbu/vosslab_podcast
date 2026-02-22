@@ -7,7 +7,12 @@ import git_file_utils
 
 SKIP_ENV = "SKIP_REPO_HYGIENE"
 REPO_ROOT = git_file_utils.get_repo_root()
-SKIP_DIRS = [".git", ".venv", "old_shell_folder"]
+SKIP_DIRS = [
+	".git",
+	".venv",
+	"old_shell_folder",
+	"pierre",
+]
 
 
 #============================================

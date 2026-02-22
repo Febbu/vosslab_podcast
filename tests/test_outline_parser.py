@@ -236,3 +236,125 @@ def test_summarize_outline_with_llm_uses_client(monkeypatch) -> None:
 	)
 	assert result["repo_activity"][0]["llm_repo_outline"] == "REPO SUMMARY"
 	assert result["llm_global_outline"] == "GLOBAL SUMMARY"
+
+
+#============================================
+def test_load_cached_repo_outline_map_filters_by_window(tmp_path) -> None:
+	"""
+	Cache loader should only use shard outlines for the same user/window.
+	"""
+	good_shard = {
+		"user": "vosslab",
+		"window_start": "2026-02-15",
+		"window_end": "2026-02-22",
+		"repo_activity": {
+			"repo_full_name": "vosslab/repo_one",
+			"llm_repo_outline": "cached one",
+		},
+	}
+	bad_shard = {
+		"user": "vosslab",
+		"window_start": "2026-02-01",
+		"window_end": "2026-02-08",
+		"repo_activity": {
+			"repo_full_name": "vosslab/repo_two",
+			"llm_repo_outline": "cached two",
+		},
+	}
+	with open(tmp_path / "001_repo_one.json", "w", encoding="utf-8") as handle:
+		json.dump(good_shard, handle)
+	with open(tmp_path / "002_repo_two.json", "w", encoding="utf-8") as handle:
+		json.dump(bad_shard, handle)
+
+	outline = {
+		"user": "vosslab",
+		"window_start": "2026-02-15",
+		"window_end": "2026-02-22",
+	}
+	cache_map = outline_github_data.load_cached_repo_outline_map(str(tmp_path), outline)
+	assert cache_map == {"vosslab/repo_one": "cached one"}
+
+
+#============================================
+def test_summarize_outline_with_llm_reuses_cached_repo(monkeypatch, tmp_path) -> None:
+	"""
+	Continue mode should reuse cached repo outlines and skip repo regeneration.
+	"""
+	shard = {
+		"user": "vosslab",
+		"window_start": "2026-02-15",
+		"window_end": "2026-02-22",
+		"repo_activity": {
+			"repo_full_name": "vosslab/repo_cached",
+			"llm_repo_outline": "CACHED SUMMARY",
+		},
+	}
+	with open(tmp_path / "001_repo_cached.json", "w", encoding="utf-8") as handle:
+		json.dump(shard, handle)
+
+	generated_purposes = []
+
+	class FakeClient:
+		def generate(self, prompt=None, messages=None, purpose=None, max_tokens=0):
+			generated_purposes.append(purpose or "")
+			if "weekly global outline" in (purpose or ""):
+				return "GLOBAL SUMMARY"
+			return "NEW REPO SUMMARY"
+
+	def fake_create_client(transport_name: str, model_override: str):
+		assert transport_name == "ollama"
+		assert model_override == ""
+		return FakeClient()
+
+	monkeypatch.setattr(outline_github_data, "create_llm_client", fake_create_client)
+	outline = {
+		"user": "vosslab",
+		"window_start": "2026-02-15",
+		"window_end": "2026-02-22",
+		"totals": {"repos": 2},
+		"notable_commit_messages": [],
+		"repo_activity": [
+			{
+				"repo_full_name": "vosslab/repo_cached",
+				"repo_name": "repo_cached",
+				"description": "",
+				"language": "",
+				"commit_count": 2,
+				"issue_count": 1,
+				"pull_request_count": 0,
+				"total_activity": 3,
+				"latest_event_time": "2026-02-21T12:00:00+00:00",
+				"commit_messages": ["m1"],
+				"issue_titles": ["i1"],
+				"pull_request_titles": [],
+			},
+			{
+				"repo_full_name": "vosslab/repo_new",
+				"repo_name": "repo_new",
+				"description": "",
+				"language": "",
+				"commit_count": 1,
+				"issue_count": 0,
+				"pull_request_count": 0,
+				"total_activity": 1,
+				"latest_event_time": "2026-02-21T11:00:00+00:00",
+				"commit_messages": ["m2"],
+				"issue_titles": [],
+				"pull_request_titles": [],
+			},
+		],
+	}
+	result = outline_github_data.summarize_outline_with_llm(
+		outline,
+		transport_name="ollama",
+		model_override="",
+		max_tokens=500,
+		repo_limit=0,
+		repo_shards_dir=str(tmp_path),
+		continue_mode=True,
+	)
+	assert result["repo_activity"][0]["llm_repo_outline"] == "CACHED SUMMARY"
+	assert result["repo_activity"][1]["llm_repo_outline"] == "NEW REPO SUMMARY"
+	assert result["llm_cached_repo_outline_count"] == 1
+	assert result["llm_generated_repo_outline_count"] == 1
+	assert generated_purposes == ["weekly repo outline", "weekly global outline"]

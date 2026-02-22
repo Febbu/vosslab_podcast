@@ -12,7 +12,7 @@ if PIPELINE_DIR not in sys.path:
 import outline_to_blog_post
 import outline_to_bluesky_post
 import outline_to_podcast_script
-import pipeline_text_utils
+from podlib import pipeline_text_utils
 
 
 #============================================
@@ -58,14 +58,20 @@ def sample_outline() -> dict:
 #============================================
 def test_blog_trim_respects_word_limit() -> None:
 	"""
-	Ensure blog body text can be trimmed to a hard word limit.
+	Ensure Markdown blog text can be trimmed to a hard word limit.
 	"""
-	outline = sample_outline()
-	paragraphs = outline_to_blog_post.build_blog_paragraphs(outline)
-	body = " ".join(paragraphs)
-	trimmed = pipeline_text_utils.trim_to_word_limit(body, 60)
+	markdown = (
+		"# Weekly Update\n\n"
+		"## Highlights\n\n"
+		"This week included several repository updates with commits, pull requests, "
+		"and issue triage across services and tooling components for content delivery.\n\n"
+		"## Repo Notes\n\n"
+		"- alpha repo migration complete\n"
+		"- beta analytics refactor underway\n"
+	)
+	trimmed = outline_to_blog_post.trim_markdown_to_word_limit(markdown, 25)
 	word_count = pipeline_text_utils.count_words(trimmed)
-	assert word_count <= 60
+	assert word_count <= 25
 
 
 #============================================

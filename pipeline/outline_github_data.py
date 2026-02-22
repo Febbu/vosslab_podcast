@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import glob
 import json
 import os
 import re
@@ -7,7 +8,7 @@ import sys
 from datetime import datetime
 from datetime import timezone
 
-import pipeline_settings
+from podlib import pipeline_settings
 
 
 REPO_SLUG_RE = re.compile(r"[^a-z0-9._-]+")
@@ -55,6 +56,19 @@ def parse_args() -> argparse.Namespace:
 		action="store_true",
 		help="Skip writing per-repo outline shard outputs.",
 	)
+	parser.add_argument(
+		"--continue",
+		dest="continue_mode",
+		action="store_true",
+		help="Reuse existing repo outline shards when available (default: enabled).",
+	)
+	parser.add_argument(
+		"--no-continue",
+		dest="continue_mode",
+		action="store_false",
+		help="Disable reuse of existing repo outline shards.",
+	)
+	parser.set_defaults(continue_mode=True)
 	parser.add_argument(
 		"--settings",
 		default="settings.yaml",
@@ -231,6 +245,76 @@ def create_llm_client(
 
 
 #============================================
+def load_cached_repo_outline_map(repo_shards_dir: str, outline: dict) -> dict[str, str]:
+	"""
+	Load repo outline cache from shard JSON files when metadata matches.
+	"""
+	shards_path = os.path.abspath(repo_shards_dir)
+	if not os.path.isdir(shards_path):
+		return {}
+
+	target_user = (outline.get("user") or "").strip()
+	target_window_start = (outline.get("window_start") or "").strip()
+	target_window_end = (outline.get("window_end") or "").strip()
+	cache: dict[str, str] = {}
+
+	candidate_paths: list[str] = []
+	manifest_path = os.path.join(shards_path, "index.json")
+	if os.path.isfile(manifest_path):
+		try:
+			with open(manifest_path, "r", encoding="utf-8") as handle:
+				manifest = json.load(handle)
+			entries = manifest.get("repo_shards") or []
+			for entry in entries:
+				if not isinstance(entry, dict):
+					continue
+				json_path = str(entry.get("json_path") or "").strip()
+				if not json_path:
+					continue
+				if not os.path.isabs(json_path):
+					json_path = os.path.join(shards_path, json_path)
+				if os.path.isfile(json_path):
+					candidate_paths.append(os.path.abspath(json_path))
+		except Exception:
+			candidate_paths = []
+	if not candidate_paths:
+		fallback_paths = glob.glob(os.path.join(shards_path, "*.json"))
+		for json_path in fallback_paths:
+			if os.path.basename(json_path) == "index.json":
+				continue
+			candidate_paths.append(os.path.abspath(json_path))
+
+	for json_path in candidate_paths:
+		try:
+			with open(json_path, "r", encoding="utf-8") as handle:
+				shard = json.load(handle)
+		except Exception:
+			continue
+		if not isinstance(shard, dict):
+			continue
+		shard_user = (shard.get("user") or "").strip()
+		shard_window_start = (shard.get("window_start") or "").strip()
+		shard_window_end = (shard.get("window_end") or "").strip()
+		if target_user and (shard_user != target_user):
+			continue
+		if target_window_start and (shard_window_start != target_window_start):
+			continue
+		if target_window_end and (shard_window_end != target_window_end):
+			continue
+		bucket = shard.get("repo_activity")
+		if not isinstance(bucket, dict):
+			continue
+		repo_full_name = str(bucket.get("repo_full_name") or "").strip()
+		if not repo_full_name:
+			continue
+		repo_outline = str(bucket.get("llm_repo_outline") or "").strip()
+		if not repo_outline:
+			continue
+		cache[repo_full_name] = repo_outline
+	return cache
+
+
+#============================================
 def summarize_outline_with_llm(
 	outline: dict,
 	*,
@@ -238,32 +322,52 @@ def summarize_outline_with_llm(
 	model_override: str,
 	max_tokens: int,
 	repo_limit: int,
+	repo_shards_dir: str = "out/outline_repos",
+	continue_mode: bool = True,
 ) -> dict:
 	"""
 	Generate repo and global summaries with local-llm-wrapper.
 	"""
 	log_step(
 		f"Initializing LLM summarization with transport={transport_name}, "
-		+ f"model={model_override or 'auto'}, max_tokens={max_tokens}, repo_limit={repo_limit}"
+		+ f"model={model_override or 'auto'}, max_tokens={max_tokens}, "
+		+ f"repo_limit={repo_limit}, continue_mode={continue_mode}"
 	)
-	client = create_llm_client(transport_name, model_override)
 	repos = outline.get("repo_activity", [])
 	repo_total = len(repos)
 	selected_repos = repos
 	if repo_limit > 0:
 		selected_repos = repos[:repo_limit]
 	log_step(f"Summarizing {len(selected_repos)} repo(s) out of {repo_total} total.")
+	cache_hits = 0
+	cached_repo_outlines: dict[str, str] = {}
+	if continue_mode:
+		cached_repo_outlines = load_cached_repo_outline_map(repo_shards_dir, outline)
+		log_step(
+			f"Loaded {len(cached_repo_outlines)} cached repo outline(s) from "
+			+ os.path.abspath(repo_shards_dir)
+		)
+	else:
+		log_step("Continue mode disabled; regenerating all repo outlines.")
 
 	repo_summaries = []
+	client = None
 	for rank, bucket in enumerate(selected_repos, start=1):
 		repo_name = bucket.get("repo_full_name", "")
-		log_step(f"Generating repo outline {rank}/{len(selected_repos)}: {repo_name}")
-		prompt = build_repo_llm_prompt(outline, bucket, rank, repo_total)
-		repo_outline = client.generate(
-			prompt=prompt,
-			purpose="weekly repo outline",
-			max_tokens=max_tokens,
-		).strip()
+		repo_outline = cached_repo_outlines.get(repo_name, "")
+		if repo_outline:
+			cache_hits += 1
+			log_step(f"Reusing cached repo outline {rank}/{len(selected_repos)}: {repo_name}")
+		else:
+			if client is None:
+				client = create_llm_client(transport_name, model_override)
+			log_step(f"Generating repo outline {rank}/{len(selected_repos)}: {repo_name}")
+			prompt = build_repo_llm_prompt(outline, bucket, rank, repo_total)
+			repo_outline = client.generate(
+				prompt=prompt,
+				purpose="weekly repo outline",
+				max_tokens=max_tokens,
+			).strip()
 		bucket["llm_repo_outline"] = repo_outline
 		log_step(f"Completed repo outline for {repo_name}; chars={len(repo_outline)}")
 		repo_summaries.append(
@@ -275,6 +379,8 @@ def summarize_outline_with_llm(
 		)
 
 	log_step("Generating global weekly outline from repo summaries.")
+	if client is None:
+		client = create_llm_client(transport_name, model_override)
 	global_prompt = build_global_llm_prompt(outline, repo_summaries)
 	global_outline = client.generate(
 		prompt=global_prompt,
@@ -283,6 +389,8 @@ def summarize_outline_with_llm(
 	).strip()
 	outline["llm_global_outline"] = global_outline
 	outline["llm_repo_summaries_count"] = len(selected_repos)
+	outline["llm_cached_repo_outline_count"] = cache_hits
+	outline["llm_generated_repo_outline_count"] = len(selected_repos) - cache_hits
 	outline["llm_transport"] = transport_name
 	outline["llm_model"] = model_override or "auto"
 	log_step(f"Completed global outline; chars={len(global_outline)}")
@@ -717,6 +825,8 @@ def main() -> None:
 		model_override=model_override,
 		max_tokens=max_tokens,
 		repo_limit=repo_limit,
+		repo_shards_dir=args.repo_shards_dir,
+		continue_mode=args.continue_mode,
 	)
 	write_outline_outputs(
 		outline,

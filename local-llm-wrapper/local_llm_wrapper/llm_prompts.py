@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Backend-agnostic prompt builders.
 """
@@ -9,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # local repo modules
-from .llm_utils import (
+from local_llm_wrapper.llm_utils import (
 	ALLOWED_CATEGORIES,
 	PROMPT_FILENAME_CHARS,
 	_sanitize_prompt_list,

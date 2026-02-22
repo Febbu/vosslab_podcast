@@ -12,7 +12,7 @@ import argparse
 # local repo modules
 import local_llm_wrapper.llm_client
 import local_llm_wrapper.llm_utils
-import local_llm_wrapper.transports
+from local_llm_wrapper.transports.ollama import OllamaTransport
 
 #============================================
 
@@ -91,7 +91,7 @@ def main() -> None:
 	else:
 		selected_model = local_llm_wrapper.llm_utils.choose_model(None)
 	transports = [
-		local_llm_wrapper.transports.OllamaTransport(model=selected_model),
+		OllamaTransport(model=selected_model),
 	]
 	client = local_llm_wrapper.llm_client.LLMClient(
 		transports=transports,

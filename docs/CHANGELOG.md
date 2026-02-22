@@ -13,6 +13,9 @@
 - Patch 6: `tests/test_content_pipeline_limits.py` and `tests/test_outline_parser.py` added for
   parser and output-limit coverage.
 - Root `Brewfile` added for macOS system dependencies used by pipeline + local LLM runtime.
+- `pipeline/script_to_audio_say.py` added as a macOS `say` backend for single-speaker audio output
+  with explicit progress logging, settings support, and voice listing.
+- `tests/test_script_to_audio_say.py` added for `say` voice parsing and narration helper coverage.
 
 ### Updated
 - `.github/workflows/weekly.yml` now runs the staged pipeline through content generation.
@@ -92,6 +95,54 @@
 - `README.md` now documents `--last-days N` and settings-based token configuration.
 - `pipeline/github_client.py` rate-limit messaging now references `settings.yaml` token setup.
 - `pip_requirements.txt` no longer includes `requests` after PyGithub migration.
+- `README.md` now documents both audio paths: multi-speaker Qwen (`script_to_audio.py`) and
+  single-speaker macOS `say` (`script_to_audio_say.py`).
+- `settings.yaml` now includes `tts.say.voice` and `tts.say.rate_wpm` defaults.
+- `pipeline/fetch_github_data.py` window flags were adjusted to presets:
+  `--last-day` (default), `--last-week`, and `--last-month`; `--last-days` was removed.
+- `automation/run_local_pipeline.sh` now uses `--last-week` for fetch stage execution.
+- `README.md` fetch examples and notes now document preset window flags instead of `--last-days`.
+- `tests/test_fetch_github_data_features.py` now validates preset-window resolution logic.
+- `pipeline/github_client.py` rate-limit handling now supports multiple PyGithub response shapes
+  (`overview.core`, `overview.resources.core`, and `overview.resources["core"]`) to avoid crashes.
+- `pipeline/github_client.py` now treats unknown rate-limit metadata as non-fatal for proactive
+  wait checks, while still surfacing clear 403 limit errors when requests are actually blocked.
+- `tests/test_github_client_rate_limit.py` now validates rate-limit parsing compatibility and
+  unknown-shape safety behavior.
+- `pipeline/outline_github_data.py` now supports resume caching with `--continue`/`--no-continue`
+  (default continue on), reusing existing per-repo shard outlines when user/window metadata match.
+- `pipeline/outline_github_data.py` now logs cache hit counts and tracks
+  `llm_cached_repo_outline_count` plus `llm_generated_repo_outline_count` in outline output.
+- `README.md` now documents default continue behavior and `--no-continue` override for forced
+  outline regeneration.
+- `tests/test_outline_parser.py` now covers repo-shard cache loading and cache-aware summarize flow.
+- `pipeline/outline_to_blog_post.py` now generates blog content with `local-llm-wrapper` instead of
+  deterministic paragraph stitching.
+- `pipeline/outline_to_blog_post.py` now writes Markdown output by default (`out/blog_post.md`)
+  suitable for MkDocs Material usage.
+- `pipeline/outline_to_blog_post.py` word handling now treats `--word-limit` as a target and logs
+  over-target output rather than failing hard.
+- `README.md` output list and process description now refer to Markdown blog output.
+- `tests/test_outline_to_blog_post.py` added for blog prompt and retry behavior.
+- `tests/test_content_pipeline_limits.py` blog coverage now targets Markdown trim helper behavior.
+- Shared utility modules were moved under `pipeline/podlib/`:
+  - `pipeline/podlib/github_client.py`
+  - `pipeline/podlib/pipeline_settings.py`
+  - `pipeline/podlib/pipeline_text_utils.py`
+- Pipeline scripts and related tests now import utility modules from `podlib` paths.
+- `local-llm-wrapper` is now treated as first-party code in repo hygiene checks:
+  `test_bandit_security`, `test_import_dot`, and `test_init_files` now scan it directly.
+- `local-llm-wrapper/local_llm_wrapper` imports were migrated from relative imports to absolute
+  package imports (`local_llm_wrapper.*`) to satisfy import-dot policy.
+- `local-llm-wrapper/local_llm_wrapper/transports/__init__.py` was simplified to satisfy
+  `__init__.py` policy checks (no import/export implementation logic).
+- `local-llm-wrapper/llm_chat.py`, `local-llm-wrapper/llm_generate.py`, and
+  `local-llm-wrapper/llm_xml_demo.py` now import `OllamaTransport` from
+  `local_llm_wrapper.transports.ollama` instead of relying on package-level re-exports.
+- `local-llm-wrapper/local_llm_wrapper/transports/ollama.py` now validates the endpoint scheme/host
+  and annotates validated `urlopen` calls to satisfy Bandit B310 checks.
+- `tests/test_import_requirements.py` now maps `applefoundationmodels` to
+  `apple-foundation-models` via import alias normalization for dependency-policy compliance.
 
 ### Validation
 - `python3 -m py_compile fetch_github_data.py outline_github_data.py outline_to_blog_post.py`
@@ -134,3 +185,21 @@
 - `source source_me.sh && python3.12 pipeline/outline_github_data.py --help`
 - `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/pipeline_settings.py tests/test_pipeline_settings.py pipeline/outline_github_data.py`
 - `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_pipeline_settings.py tests/test_outline_parser.py tests/test_content_pipeline_limits.py tests/test_fetch_github_data_features.py` (pass: `22 passed`)
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/script_to_audio_say.py tests/test_script_to_audio_say.py`
+- `source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_script_to_audio_say.py`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/fetch_github_data.py tests/test_fetch_github_data_features.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_fetch_github_data_features.py'` (pass: `5 passed`)
+- `bash -lc 'source source_me.sh && python3.12 pipeline/fetch_github_data.py --help'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/github_client.py tests/test_github_client_rate_limit.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_github_client_rate_limit.py tests/test_fetch_github_data_features.py'` (pass: `9 passed`)
+- `bash -lc 'source source_me.sh && python3.12 pipeline/fetch_github_data.py --last-day --max-repos 1 --output out/smoke_github_data.jsonl --daily-cache-dir out/smoke_daily_cache'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/outline_github_data.py tests/test_outline_parser.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_outline_parser.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/outline_to_blog_post.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'` (pass: `5 passed`)
+- `bash -lc 'source source_me.sh && python3.12 pipeline/outline_to_blog_post.py --help'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/fetch_github_data.py pipeline/outline_github_data.py pipeline/outline_to_blog_post.py pipeline/outline_to_bluesky_post.py pipeline/outline_to_podcast_script.py pipeline/script_to_audio_say.py tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'` (pass: `19 passed`)
+- `bash -lc 'source source_me.sh && python3.12 pipeline/fetch_github_data.py --help && python3.12 pipeline/outline_to_blog_post.py --help'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_bandit_security.py tests/test_import_dot.py tests/test_import_requirements.py tests/test_init_files.py'` (pass: `52 passed`)
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/'` (pass: `322 passed`)

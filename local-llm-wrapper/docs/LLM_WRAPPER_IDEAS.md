@@ -139,19 +139,19 @@ This document reviews the LLM-related code in five local repos to guide a unifie
 
 ## Common Patterns Across Repos
 
-1. **Hardware detection**  
+1. **Hardware detection**
    `get_vram_size_in_gb()` via `system_profiler` for Apple Silicon or Intel VRAM.
 
-2. **Model selection heuristics**  
+2. **Model selection heuristics**
    Thresholds centered around 40/14/4 GB for Ollama.
 
-3. **XML-like response parsing**  
+3. **XML-like response parsing**
    Most text LLM callers expect tagged output and parse with regex.
 
-4. **Apple Foundation Models gating**  
+4. **Apple Foundation Models gating**
    Arm64 + macOS 26+ + `apple_intelligence_available()` checks.
 
-5. **Component dicts for vision models**  
+5. **Component dicts for vision models**
    Vision pipelines pass `{model, tokenizer, device, prompt}`.
 
 ---
@@ -172,7 +172,7 @@ This document reviews the LLM-related code in five local repos to guide a unifie
 
 ## Env Var Policy (Required)
 
-Per `PYTHON_STYLE.md`: no custom environment variables to configure behavior.  
+Per `PYTHON_STYLE.md`: no custom environment variables to configure behavior.
 Configuration must be **explicit** via CLI args, config files, or direct function parameters.
 
 This means the unified wrapper should **not** use `DJ_LLM_BACKEND`, `OLLAMA_MODEL`, or similar env vars.
@@ -263,14 +263,14 @@ The wrapper should remain **library-first**; any CLI is optional and should not 
 
 ## Features to Borrow (from other projects)
 
-1. **AFM session instructions + retry loop**  
+1. **AFM session instructions + retry loop**
    From `automated_radio_disc_jockey/config_apple_models.py` and
    `screenshot-ai-renamer-macos/tools/config_apple_models.py`.
 
-2. **Quiet mode**  
+2. **Quiet mode**
    From `biology-problems-website/llm_wrapper.py`.
 
-3. **Prompt discipline for structured outputs**  
+3. **Prompt discipline for structured outputs**
    Keep the strict "return only tags" behavior and example outputs from existing prompt builders.
 
 ---
@@ -291,7 +291,7 @@ The wrapper should remain **library-first**; any CLI is optional and should not 
 
 ## Bottom Line
 
-**Yes** -- `llm-file-rename-n-sort` is the most advanced and is worth keeping as the core.  
+**Yes** -- `llm-file-rename-n-sort` is the most advanced and is worth keeping as the core.
 Add AFM retries/instructions, a standardized error taxonomy, opt-in bounded history, and remove any env-var-based configuration. Keep the wrapper strictly text-only to avoid scope creep.
 
 ---

@@ -7,8 +7,8 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
-import github_client
-import pipeline_settings
+from podlib import github_client
+from podlib import pipeline_settings
 
 
 DATE_HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b")
@@ -41,12 +41,21 @@ def parse_args() -> argparse.Namespace:
 		default="settings.yaml",
 		help="YAML settings path for defaults.",
 	)
-	parser.add_argument(
-		"--last-days",
-		dest="last_n_days",
-		type=int,
-		default=1,
-		help="Fetch activity from the last N days (default: 1).",
+	window_group = parser.add_mutually_exclusive_group()
+	window_group.add_argument(
+		"--last-day",
+		action="store_true",
+		help="Fetch activity from the last 1 day (default).",
+	)
+	window_group.add_argument(
+		"--last-week",
+		action="store_true",
+		help="Fetch activity from the last 7 days.",
+	)
+	window_group.add_argument(
+		"--last-month",
+		action="store_true",
+		help="Fetch activity from the last 30 days.",
 	)
 	parser.add_argument(
 		"--output",
@@ -83,9 +92,11 @@ def resolve_window_days(args: argparse.Namespace) -> int:
 	"""
 	Resolve selected trailing day window.
 	"""
-	if args.last_n_days < 1:
-		raise RuntimeError("--last-days must be >= 1")
-	return args.last_n_days
+	if args.last_month:
+		return 30
+	if args.last_week:
+		return 7
+	return 1
 
 
 #============================================

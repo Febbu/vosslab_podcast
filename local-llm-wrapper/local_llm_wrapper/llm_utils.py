@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Shared LLM helpers (backend-agnostic).
 """
@@ -14,7 +13,7 @@ import subprocess
 import sys
 
 # local repo modules
-from .errors import ContextWindowError, GuardrailRefusalError
+from local_llm_wrapper.errors import ContextWindowError, GuardrailRefusalError
 
 #============================================
 

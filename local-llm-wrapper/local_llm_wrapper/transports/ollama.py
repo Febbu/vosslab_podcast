@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Ollama chat transport.
 """
@@ -10,10 +9,11 @@ import json
 import random
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # local repo modules
-from ..errors import TransportUnavailableError
+from local_llm_wrapper.errors import TransportUnavailableError
 
 
 class OllamaTransport:
@@ -80,6 +80,17 @@ class OllamaTransport:
 		self.messages.append({"role": "assistant", "content": assistant_message})
 		self._trim_history()
 
+	def _validated_chat_endpoint(self) -> str:
+		"""
+		Build and validate the Ollama chat endpoint URL.
+		"""
+		parsed = urllib.parse.urlparse(self.base_url)
+		if parsed.scheme not in {"http", "https"}:
+			raise TransportUnavailableError("Ollama base_url must use http or https.")
+		if not parsed.netloc:
+			raise TransportUnavailableError("Ollama base_url must include a host.")
+		return urllib.parse.urljoin(self.base_url + "/", "api/chat")
+
 	def generate(self, prompt: str, *, purpose: str, max_tokens: int) -> str:
 		messages = self._build_messages(prompt)
 		payload: dict[str, object] = {
@@ -90,13 +101,13 @@ class OllamaTransport:
 		}
 		time.sleep(random.random())
 		request = urllib.request.Request(
-			f"{self.base_url}/api/chat",
+			self._validated_chat_endpoint(),
 			data=json.dumps(payload).encode("utf-8"),
 			headers={"Content-Type": "application/json"},
 			method="POST",
 		)
 		try:
-			with urllib.request.urlopen(request, timeout=30) as response:
+			with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
 				if response.status >= 400:
 					raise RuntimeError(f"Ollama chat error: status {response.status}")
 				response_body = response.read()
@@ -125,13 +136,13 @@ class OllamaTransport:
 		}
 		time.sleep(random.random())
 		request = urllib.request.Request(
-			f"{self.base_url}/api/chat",
+			self._validated_chat_endpoint(),
 			data=json.dumps(payload).encode("utf-8"),
 			headers={"Content-Type": "application/json"},
 			method="POST",
 		)
 		try:
-			with urllib.request.urlopen(request, timeout=30) as response:
+			with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
 				if response.status >= 400:
 					raise RuntimeError(f"Ollama chat error: status {response.status}")
 				response_body = response.read()

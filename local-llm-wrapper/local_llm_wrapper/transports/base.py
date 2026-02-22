@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Transport interface for LLM backends.
 """

@@ -22,7 +22,7 @@ log_step "Sourcing runtime environment from source_me.sh"
 source "$REPO_ROOT/source_me.sh"
 
 log_step "Running fetch stage."
-"$REPO_ROOT/.venv/bin/python" pipeline/fetch_github_data.py --settings settings.yaml --last-days 7 --output out/github_data.jsonl --daily-cache-dir out/daily_cache
+"$REPO_ROOT/.venv/bin/python" pipeline/fetch_github_data.py --settings settings.yaml --last-week --output out/github_data.jsonl --daily-cache-dir out/daily_cache
 log_step "Running outline stage."
 "$REPO_ROOT/.venv/bin/python" pipeline/outline_github_data.py --settings settings.yaml --input out/github_data.jsonl --outline-json out/outline.json --outline-txt out/outline.txt
 log_step "Running blog output stage."

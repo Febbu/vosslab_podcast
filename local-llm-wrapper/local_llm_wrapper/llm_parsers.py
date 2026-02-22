@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Backend-agnostic response parsers.
 """

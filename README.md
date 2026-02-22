@@ -8,11 +8,12 @@ Generates a weekly multi-channel content package from GitHub activity.
 2. `pipeline/outline_github_data.py`
 - Parse the large JSONL file and write a summary outline (no length limit).
 3. Content generation from outline
-- `pipeline/outline_to_blog_post.py`: write a webpage blog post (max 500 words).
+- `pipeline/outline_to_blog_post.py`: write an LLM-generated Markdown blog post for MkDocs (target 500 words).
 - `pipeline/outline_to_bluesky_post.py`: write a Bluesky post (max 140 characters).
 - `pipeline/outline_to_podcast_script.py`: write an N-speaker podcast script (max 500 words).
-4. `pipeline/script_to_audio.py`
-- Convert the N-speaker podcast script into an audio file using TTS.
+4. Audio rendering
+- `pipeline/script_to_audio.py`: multi-speaker Qwen TTS (`out/episode.wav`).
+- `pipeline/script_to_audio_say.py`: single-speaker macOS `say`/Siri-style render (`out/episode_siri.aiff`).
 
 ## Output files
 - `out/github_data.jsonl` (raw collected GitHub data)
@@ -20,17 +21,18 @@ Generates a weekly multi-channel content package from GitHub activity.
 - `out/outline.json` and `out/outline.txt` (summary outline)
 - `out/outline_repos/index.json` (manifest of per-repo outline shards)
 - `out/outline_repos/*.json` and `out/outline_repos/*.txt` (one shard per repo)
-- `out/blog_post.html` (<= 500 words)
+- `out/blog_post.md` (Markdown blog post, target 500 words)
 - `out/bluesky_post.txt` (<= 140 characters)
 - `out/podcast_script.txt` (<= 500 words, N speakers)
 - `out/episode.wav` (or equivalent audio output)
+- `out/episode_siri.aiff` (optional single-speaker macOS `say` output)
 
 ## Usage (local)
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r pip_requirements.txt
-python pipeline/fetch_github_data.py --settings settings.yaml --last-days 7
+python pipeline/fetch_github_data.py --settings settings.yaml --last-week
 python pipeline/outline_github_data.py --settings settings.yaml --repo-shards-dir out/outline_repos
 python pipeline/outline_to_blog_post.py
 python pipeline/outline_to_bluesky_post.py
@@ -57,6 +59,11 @@ llm:
           enabled: true
         - name: "llama3.2:3b"
           enabled: false
+
+tts:
+  say:
+    voice: "Siri"
+    rate_wpm: 185
 ```
 
 CLI flags still override settings values when provided.
@@ -83,13 +90,16 @@ CLI flags still override settings values when provided.
 - `pipeline/outline_github_data.py` writes one outline shard per repo by default.
 - Each shard has both JSON and text outputs under `out/outline_repos/`.
 - Use `out/outline_repos/index.json` to iterate repos and summarize each shard independently.
+- Continue mode is enabled by default and reuses existing repo shard outlines to avoid regenerating
+  already-complete repo summaries.
 - Optional flags:
   - `--repo-shards-dir <path>` to change shard output location.
   - `--skip-repo-shards` to disable shard output.
+  - `--no-continue` to force regeneration of all repo outlines.
 
 ## Fetch stage notes
 - Default user comes from `settings.yaml` (`github.username`), with fallback to `vosslab`.
-- Window length is set by `--last-days N` (default: `1`).
+- Window presets are `--last-day` (default), `--last-week`, or `--last-month`.
 - `pipeline/fetch_github_data.py` attempts to fetch `docs/CHANGELOG.md` for relevant repos and writes
   `repo_changelog` records when available.
 - Daily cache files are written by default to `out/daily_cache/`.
@@ -122,6 +132,19 @@ pip install -r pip_requirements.txt
 ```bash
 conda activate qwen3-tts
 python pipeline/script_to_audio.py --script out/podcast_script.txt --output out/episode.wav
+```
+
+### Generate single-speaker audio with macOS say (Siri-style)
+This backend renders one voice only and collapses multi-speaker script lines into a single narration.
+
+```bash
+python pipeline/script_to_audio_say.py --settings settings.yaml --script out/podcast_script.txt --output out/episode_siri.aiff --voice Siri
+```
+
+List installed voices:
+
+```bash
+python pipeline/script_to_audio_say.py --list-voices
 ```
 
 ## Local launchd scheduling (macOS)

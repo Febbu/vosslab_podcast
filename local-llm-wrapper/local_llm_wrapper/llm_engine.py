@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Backend-agnostic LLM engine with fallback and strict parsing.
 """
@@ -9,9 +8,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # local repo modules
-from .errors import TransportUnavailableError
-from .llm_parsers import ParseError, KeepResult, RenameResult, SortResult, parse_keep_response, parse_rename_response, parse_sort_response
-from .llm_prompts import (
+from local_llm_wrapper.errors import TransportUnavailableError
+from local_llm_wrapper.llm_parsers import ParseError, KeepResult, RenameResult, SortResult, parse_keep_response, parse_rename_response, parse_sort_response
+from local_llm_wrapper.llm_prompts import (
 	KeepRequest,
 	RenameRequest,
 	SortItem,
@@ -25,7 +24,7 @@ from .llm_prompts import (
 	build_rename_prompt_minimal,
 	build_sort_prompt,
 )
-from .llm_utils import (
+from local_llm_wrapper.llm_utils import (
 	compute_stem_features,
 	_ensure_text_prompt,
 	_ensure_chat_messages,
@@ -37,7 +36,7 @@ from .llm_utils import (
 	normalize_reason,
 	sanitize_filename,
 )
-from .transports.base import LLMTransport
+from local_llm_wrapper.transports.base import LLMTransport
 
 #============================================
 

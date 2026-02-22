@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime
 
-import pipeline_text_utils
+from podlib import pipeline_text_utils
 
 
 #============================================

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Public client wrapper for the local LLM engine.
 """
@@ -6,10 +5,10 @@ Public client wrapper for the local LLM engine.
 from __future__ import annotations
 
 # local repo modules
-from .llm_engine import LLMEngine
-from .llm_parsers import RenameResult, SortResult
-from .llm_prompts import SortItem
-from .transports.base import LLMTransport
+from local_llm_wrapper.llm_engine import LLMEngine
+from local_llm_wrapper.llm_parsers import RenameResult, SortResult
+from local_llm_wrapper.llm_prompts import SortItem
+from local_llm_wrapper.transports.base import LLMTransport
 
 #============================================
 

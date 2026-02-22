@@ -551,3 +551,196 @@ Next actions
 1. Validate one real outline run using Apple transport from settings to confirm local runtime.
 2. If needed later, flip provider flags in `settings.yaml` to switch between Apple and Ollama.
 3. Consider removing `--llm-transport` CLI override if you want strict settings-only provider selection.
+
+---
+Session Update: 2026-02-22 (Single-Speaker macOS say TTS Path Added)
+
+What changed
+- Added `pipeline/script_to_audio_say.py` as a dedicated macOS `say` backend for single-speaker
+  output from `out/podcast_script.txt`.
+- New script supports:
+  - explicit progress logging with `HH:MM:SS` timestamps,
+  - `--list-voices` to show installed macOS voices,
+  - `--voice` override (including a `Siri` alias lookup),
+  - `--rate-wpm` override,
+  - settings fallback from `settings.yaml` (`tts.say.voice`, `tts.say.rate_wpm`),
+  - collapsing multi-speaker script lines into one narration block for one-voice synthesis.
+- Added tests: `tests/test_script_to_audio_say.py` for parser/narration/voice-resolution helpers.
+- Updated docs/config:
+  - `README.md` now documents both audio paths (`script_to_audio.py` and `script_to_audio_say.py`).
+  - `settings.yaml` now includes `tts.say` defaults.
+  - `docs/CHANGELOG.md` now records this addition.
+
+What was tested
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/script_to_audio_say.py tests/test_script_to_audio_say.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_script_to_audio_say.py'` (pass: `5 passed`)
+- `bash -lc 'source source_me.sh && python3.12 pipeline/script_to_audio_say.py --help'`
+
+Next actions
+1. Run one real synthesis locally with `--voice Siri` and confirm desired voice/rate quality.
+2. If specific Siri voice names differ on your machine, use `--list-voices` and set
+   `settings.yaml` `tts.say.voice` to an exact installed name.
+3. Optionally add a `run_local_pipeline.sh` branch to call `script_to_audio_say.py` when you want
+   one-voice audio instead of Qwen multi-speaker output.
+
+---
+Session Update: 2026-02-22 (Fetch Window Presets Restored)
+
+What changed
+- Updated `pipeline/fetch_github_data.py` CLI window handling to use preset flags:
+  - `--last-day` (default),
+  - `--last-week`,
+  - `--last-month`.
+- Removed `--last-days` from fetch CLI.
+- Updated `resolve_window_days()` to map presets to 1/7/30 days.
+- Updated `automation/run_local_pipeline.sh` fetch call from `--last-days 7` to `--last-week`.
+- Updated `README.md` fetch command and notes to document preset window flags.
+- Updated `tests/test_fetch_github_data_features.py` for preset-based window resolution.
+
+What was tested
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/fetch_github_data.py tests/test_fetch_github_data_features.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_fetch_github_data_features.py'` (pass: `5 passed`)
+- `bash -lc 'source source_me.sh && python3.12 pipeline/fetch_github_data.py --help'`
+
+Next actions
+1. Run fetch locally with one preset (for example `--last-week`) to verify expected window output.
+2. If desired, add `--last-two-days` as an extra preset in a follow-up without reintroducing
+   free-form day counts.
+
+---
+Session Update: 2026-02-22 (PyGithub Rate-Limit Compatibility Fix)
+
+What changed
+- Fixed `pipeline/github_client.py` rate-limit parsing to support multiple PyGithub shapes:
+  - `get_rate_limit().core`
+  - `get_rate_limit().resources.core`
+  - `get_rate_limit().resources["core"]`
+- Added defensive handling so proactive rate-limit checks do not crash when metadata shape is
+  unexpected; fetch continues and still reports clear rate-limit errors on actual 403 responses.
+- Added tests in `tests/test_github_client_rate_limit.py` to cover supported shapes and
+  unknown-shape safety.
+
+What was tested
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/github_client.py tests/test_github_client_rate_limit.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_github_client_rate_limit.py tests/test_fetch_github_data_features.py'` (pass: `9 passed`)
+- `bash -lc 'source source_me.sh && python3.12 pipeline/fetch_github_data.py --last-day --max-repos 1 --output out/smoke_github_data.jsonl --daily-cache-dir out/smoke_daily_cache'` (pass)
+
+Next actions
+1. Re-run fetch locally with the new preset flags (`--last-day`, `--last-week`, or `--last-month`).
+2. Add `github.token` in `settings.yaml` for higher rate limits if you plan full-repo runs.
+
+---
+Session Update: 2026-02-22 (Outline Continue-Mode Cache Reuse)
+
+What changed
+- Updated `pipeline/outline_github_data.py` to support resume caching of repo outlines via:
+  - `--continue` (enabled by default),
+  - `--no-continue` (force full repo outline regeneration).
+- Continue mode now loads cached repo shards from `--repo-shards-dir` and reuses
+  `repo_activity.llm_repo_outline` when user/window metadata match current input.
+- Summarization now tracks cache behavior in outline output:
+  - `llm_cached_repo_outline_count`
+  - `llm_generated_repo_outline_count`
+- LLM client creation is now lazy in outline summarize flow and only initialized when needed.
+- Updated `README.md` to document default continue behavior and `--no-continue`.
+- Added cache-focused tests in `tests/test_outline_parser.py`.
+
+What was tested
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/outline_github_data.py tests/test_outline_parser.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_outline_parser.py'` (pass: `6 passed`)
+- `bash -lc 'source source_me.sh && python3.12 pipeline/outline_github_data.py --help'`
+
+Next actions
+1. Re-run outline stage against existing `out/outline_repos` to confirm cache hits on repeat runs.
+2. Use `--no-continue` only when forcing complete re-generation after prompt/schema changes.
+
+---
+Session Update: 2026-02-22 (Blog Stage Switched to LLM Markdown Output)
+
+What changed
+- Updated `pipeline/outline_to_blog_post.py` to generate blog content through `local-llm-wrapper`
+  instead of deterministic paragraph assembly.
+- Blog output is now Markdown by default (`out/blog_post.md`) so it can be used directly with
+  MkDocs Material workflows.
+- `--word-limit` behavior for blog stage now acts as a target length; if output exceeds target,
+  the script logs the over-target result and keeps content instead of hard-failing.
+- Added blog generation tests in `tests/test_outline_to_blog_post.py`.
+- Updated `tests/test_content_pipeline_limits.py` to validate Markdown-oriented trim behavior.
+- Updated `README.md` process/output wording from HTML blog output to Markdown blog output.
+
+What was tested
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/outline_to_blog_post.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'` (pass: `5 passed`)
+- `bash -lc 'source source_me.sh && python3.12 pipeline/outline_to_blog_post.py --help'`
+
+Next actions
+1. Run one real blog generation against `out/outline.json` and inspect Markdown readability in
+   your MkDocs context.
+2. If needed, tune blog prompt wording in code before introducing shared prompt-file templates.
+
+---
+Session Update: 2026-02-22 (Podlib Import Path Migration)
+
+What changed
+- Updated pipeline and test imports to match utility module move into `pipeline/podlib/`.
+- Replaced direct imports:
+  - `import github_client` -> `from podlib import github_client`
+  - `import pipeline_settings` -> `from podlib import pipeline_settings`
+  - `import pipeline_text_utils` -> `from podlib import pipeline_text_utils`
+- Applied updates to:
+  - `pipeline/fetch_github_data.py`
+  - `pipeline/outline_github_data.py`
+  - `pipeline/outline_to_blog_post.py`
+  - `pipeline/outline_to_bluesky_post.py`
+  - `pipeline/outline_to_podcast_script.py`
+  - `pipeline/script_to_audio_say.py`
+  - `tests/test_pipeline_settings.py`
+  - `tests/test_github_client_rate_limit.py`
+  - `tests/test_content_pipeline_limits.py`
+  - `tests/test_outline_to_blog_post.py`
+
+What was tested
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m py_compile pipeline/fetch_github_data.py pipeline/outline_github_data.py pipeline/outline_to_blog_post.py pipeline/outline_to_bluesky_post.py pipeline/outline_to_podcast_script.py pipeline/script_to_audio_say.py tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'`
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py'` (pass: `19 passed`)
+- `bash -lc 'source source_me.sh && python3.12 pipeline/fetch_github_data.py --help && python3.12 pipeline/outline_to_blog_post.py --help'`
+
+Next actions
+1. Keep new utility modules under `pipeline/podlib/` and route any future shared helpers there.
+2. Optionally add `pipeline/podlib/__init__.py` if you want explicit package marker semantics.
+
+---
+Session Update: 2026-02-22 (First-Party local-llm-wrapper Hygiene Cleanup)
+
+What changed
+- Treated `local-llm-wrapper` as first-party code and fixed hygiene/test failures directly.
+- Migrated `local_llm_wrapper` package imports from relative form to absolute package imports
+  (`local_llm_wrapper.*`) across:
+  - `local-llm-wrapper/local_llm_wrapper/llm.py`
+  - `local-llm-wrapper/local_llm_wrapper/llm_client.py`
+  - `local-llm-wrapper/local_llm_wrapper/llm_engine.py`
+  - `local-llm-wrapper/local_llm_wrapper/llm_prompts.py`
+  - `local-llm-wrapper/local_llm_wrapper/llm_utils.py`
+  - `local-llm-wrapper/local_llm_wrapper/transports/apple.py`
+  - `local-llm-wrapper/local_llm_wrapper/transports/ollama.py`
+- Updated CLI scripts to import transport classes directly from module paths:
+  - `local-llm-wrapper/llm_chat.py`
+  - `local-llm-wrapper/llm_generate.py`
+  - `local-llm-wrapper/llm_xml_demo.py`
+- Simplified `local-llm-wrapper/local_llm_wrapper/transports/__init__.py` to satisfy
+  `__init__.py` policy checks.
+- Hardened `local-llm-wrapper/local_llm_wrapper/transports/ollama.py` endpoint handling:
+  added HTTP/HTTPS scheme + host validation and Bandit-safe call annotations for validated
+  `urllib.request.urlopen` usage.
+- Re-enabled `local-llm-wrapper` coverage in repo hygiene tests by removing it from test skip-dir
+  sets.
+- Added import-requirements alias mapping:
+  `applefoundationmodels -> apple-foundation-models`.
+
+What was tested
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/test_bandit_security.py tests/test_import_dot.py tests/test_import_requirements.py tests/test_init_files.py'` (pass: `52 passed`)
+- `bash -lc 'source source_me.sh && PYTHONPYCACHEPREFIX=/tmp/vosslab_podcast_pycache python3.12 -m pytest -q tests/'` (pass: `322 passed`)
+
+Next actions
+1. Keep `local-llm-wrapper` import style absolute to avoid future import-dot regressions.
+2. If transport package re-exports are needed later, move them outside `__init__.py` to keep
+   init-file policy clean.
