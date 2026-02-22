@@ -1,3 +1,4 @@
+import random
 import time
 from datetime import datetime
 from datetime import timezone
@@ -20,6 +21,8 @@ class GitHubClient:
 		self.log_fn = log_fn
 		self._rate_check_count = 0
 		self._low_remaining_threshold = 5
+		self._retry_wait_seconds = 10
+		self._retry_attempts_on_403 = 1
 		try:
 			from github import Github
 			from github.GithubException import GithubException
@@ -110,6 +113,37 @@ class GitHubClient:
 		time.sleep(sleep_seconds)
 
 	#============================================
+	def sleep_request_jitter(self, context: str) -> None:
+		"""
+		Add small random jitter before API calls.
+		"""
+		delay = random.random()
+		time.sleep(delay)
+
+	#============================================
+	def call_with_retry(self, context: str, call_fn):
+		"""
+		Run one API call with jitter and one retry on 403.
+		"""
+		attempt = 0
+		while True:
+			self.sleep_request_jitter(context)
+			try:
+				return call_fn()
+			except self._github_exception_class as error:
+				status = getattr(error, "status", None)
+				if (status == 403) and (attempt < self._retry_attempts_on_403):
+					attempt += 1
+					wait_seconds = self._retry_wait_seconds
+					self.log(
+						f"Request {context} hit 403; sleeping {wait_seconds}s before retry "
+						+ f"({attempt}/{self._retry_attempts_on_403})."
+					)
+					time.sleep(wait_seconds)
+					continue
+				self.raise_from_github_error(error, context)
+
+	#============================================
 	def raise_from_github_error(self, error: Exception, context: str) -> None:
 		"""
 		Raise a human-readable rate-limit error or re-raise original.
@@ -137,14 +171,14 @@ class GitHubClient:
 		List owner repositories sorted by updated timestamp.
 		"""
 		self.maybe_wait_for_rate_limit("list_repos", force=True)
-		try:
-			return self.client.get_user(user).get_repos(
+		return self.call_with_retry(
+			f"GET /users/{user}/repos",
+			lambda: self.client.get_user(user).get_repos(
 				type="owner",
 				sort="updated",
 				direction="desc",
-			)
-		except self._github_exception_class as error:
-			self.raise_from_github_error(error, f"listing repos for {user}")
+			),
+		)
 
 	#============================================
 	def list_commits(self, repo_obj, since: datetime, until: datetime):
@@ -152,10 +186,10 @@ class GitHubClient:
 		List repository commits inside time window.
 		"""
 		self.maybe_wait_for_rate_limit(f"list_commits {repo_obj.full_name}")
-		try:
-			return repo_obj.get_commits(since=since, until=until)
-		except self._github_exception_class as error:
-			self.raise_from_github_error(error, f"listing commits for {repo_obj.full_name}")
+		return self.call_with_retry(
+			f"GET /repos/{repo_obj.full_name}/commits",
+			lambda: repo_obj.get_commits(since=since, until=until),
+		)
 
 	#============================================
 	def list_issues(self, repo_obj, since: datetime):
@@ -163,15 +197,15 @@ class GitHubClient:
 		List repository issues and pull requests updated since window start.
 		"""
 		self.maybe_wait_for_rate_limit(f"list_issues {repo_obj.full_name}")
-		try:
-			return repo_obj.get_issues(
+		return self.call_with_retry(
+			f"GET /repos/{repo_obj.full_name}/issues",
+			lambda: repo_obj.get_issues(
 				state="all",
 				since=since,
 				sort="updated",
 				direction="desc",
-			)
-		except self._github_exception_class as error:
-			self.raise_from_github_error(error, f"listing issues for {repo_obj.full_name}")
+			),
+		)
 
 	#============================================
 	def get_file_content(self, repo_obj, path: str, ref: str) -> dict | None:
@@ -179,19 +213,33 @@ class GitHubClient:
 		Get one file content payload with metadata.
 		"""
 		self.maybe_wait_for_rate_limit(f"get_file_content {repo_obj.full_name} {path}")
-		try:
-			if ref:
-				content = repo_obj.get_contents(path, ref=ref)
-			else:
-				content = repo_obj.get_contents(path)
-		except self._github_exception_class as error:
-			status = getattr(error, "status", None)
-			if status == 404:
-				return None
-			self.raise_from_github_error(
-				error,
-				f"fetching {path} for {repo_obj.full_name}",
-			)
+		attempt = 0
+		while True:
+			self.sleep_request_jitter(f"GET /repos/{repo_obj.full_name}/contents/{path}")
+			try:
+				if ref:
+					content = repo_obj.get_contents(path, ref=ref)
+				else:
+					content = repo_obj.get_contents(path)
+				break
+			except self._github_exception_class as error:
+				status = getattr(error, "status", None)
+				if status == 404:
+					return None
+				if (status == 403) and (attempt < self._retry_attempts_on_403):
+					attempt += 1
+					wait_seconds = self._retry_wait_seconds
+					self.log(
+						f"Request GET /repos/{repo_obj.full_name}/contents/{path} hit 403; "
+						+ f"sleeping {wait_seconds}s before retry "
+						+ f"({attempt}/{self._retry_attempts_on_403})."
+					)
+					time.sleep(wait_seconds)
+					continue
+				self.raise_from_github_error(
+					error,
+					f"fetching {path} for {repo_obj.full_name}",
+				)
 		if isinstance(content, list):
 			return None
 		text = content.decoded_content.decode("utf-8", errors="replace")

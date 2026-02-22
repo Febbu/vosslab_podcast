@@ -156,12 +156,13 @@ python pipeline/script_to_audio_say.py --list-voices
 
 ## Local launchd scheduling (macOS)
 - Runner script: `automation/run_local_pipeline.sh`
+- Runner script: `automation/run_local_pipeline.py`
 - Install launchd job: `automation/install_launchd_pipeline.sh`
 - Remove launchd job: `automation/uninstall_launchd_pipeline.sh`
 
 Commands:
 ```bash
-chmod +x automation/run_local_pipeline.sh automation/install_launchd_pipeline.sh automation/uninstall_launchd_pipeline.sh
+chmod +x automation/run_local_pipeline.py automation/install_launchd_pipeline.sh automation/uninstall_launchd_pipeline.sh
 ./automation/install_launchd_pipeline.sh
 ```
 

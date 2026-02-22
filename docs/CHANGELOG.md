@@ -16,6 +16,8 @@
 - `pipeline/script_to_audio_say.py` added as a macOS `say` backend for single-speaker audio output
   with explicit progress logging, settings support, and voice listing.
 - `tests/test_script_to_audio_say.py` added for `say` voice parsing and narration helper coverage.
+- `automation/run_local_pipeline.py` added as the new local pipeline runner with richer terminal
+  output, stage timing summary, daily-dated fetch output wiring, and per-stage retry handling.
 
 ### Updated
 - `.github/workflows/weekly.yml` now runs the staged pipeline through content generation.
@@ -182,6 +184,19 @@
   `--continue`/`--no-continue` (default continue) and `--repo-draft-cache-dir`.
 - `pipeline/outline_to_blog_post.py` now exits cleanly with progress logs when blog generation
   fails, instead of printing a traceback.
+- `automation/run_local_pipeline.sh` now follows repo runtime conventions from
+  `AGENTS.md`/`docs/REPO_STYLE.md`: repo root is resolved with `git rev-parse --show-toplevel`,
+  `source_me.sh` is required, stage commands run via `python3` after sourcing, fetch defaults to
+  `--last-day`, and blog output target path now uses Markdown (`out/blog_post.md`).
+- `automation/install_launchd_pipeline.sh` now points launchd to
+  `automation/run_local_pipeline.py` and executes it with `python3`.
+- `README.md` local launchd runner references now point to `automation/run_local_pipeline.py`.
+- `pip_requirements.txt` now includes `rich` for colored local pipeline runner output.
+- `pipeline/fetch_github_data.py` main output JSONL path is now local-date-stamped by default,
+  producing one top-level fetch file per day (for example `out/github_data_YYYY-MM-DD.jsonl`).
+- `pipeline/podlib/github_client.py` now applies small request jitter
+  (`time.sleep(random.random())`) before GitHub API calls and retries once after 403 responses by
+  waiting 10 seconds, to better tolerate transient API throttling.
 - `tests/test_outline_to_blog_post.py` now includes coverage ensuring short valid Markdown is still
   accepted by blog quality checks.
 - `tests/test_outline_to_blog_post.py` now covers H1 salvage behavior for H2-leading and plain-text

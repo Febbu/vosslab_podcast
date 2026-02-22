@@ -12,6 +12,7 @@ from podlib import pipeline_settings
 
 
 DATE_HEADING_RE = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\b")
+DATE_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 #============================================
@@ -97,6 +98,34 @@ def resolve_window_days(args: argparse.Namespace) -> int:
 	if args.last_week:
 		return 7
 	return 1
+
+
+#============================================
+def local_date_stamp() -> str:
+	"""
+	Return local date stamp for output filenames.
+	"""
+	return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+#============================================
+def date_stamp_output_path(output_path: str, date_text: str) -> str:
+	"""
+	Ensure output filename includes one local-date stamp.
+	"""
+	candidate = (output_path or "").strip() or "out/github_data.jsonl"
+	candidate = candidate.replace("{date}", date_text)
+	directory, filename = os.path.split(candidate)
+	if not filename:
+		filename = "github_data.jsonl"
+	stem, extension = os.path.splitext(filename)
+	if not extension:
+		extension = ".jsonl"
+	if DATE_STAMP_RE.search(filename):
+		dated_filename = filename
+	else:
+		dated_filename = f"{stem}_{date_text}{extension}"
+	return os.path.join(directory, dated_filename)
 
 
 #============================================
@@ -549,9 +578,12 @@ def main() -> None:
 	else:
 		log_step(f"Repository candidates: {len(repos)}.")
 
-	output_path = os.path.abspath(args.output)
+	date_text = local_date_stamp()
+	dated_output = date_stamp_output_path(args.output, date_text)
+	output_path = os.path.abspath(dated_output)
 	output_dir = os.path.dirname(output_path)
 	os.makedirs(output_dir, exist_ok=True)
+	log_step(f"Using local date stamp for fetch output filename: {date_text}")
 	log_step(f"Writing JSONL output to: {output_path}")
 
 	record_counts = {

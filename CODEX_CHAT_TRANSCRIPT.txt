@@ -887,3 +887,39 @@ Next actions
    confirm cache-hit logs appear on immediate rerun.
 2. Optionally externalize Bluesky/podcast prompts to a `prompts/` folder for human editing parity
    with your other repo pattern.
+
+---
+Session Update: 2026-02-22 (run_local_pipeline Rule Alignment)
+
+What changed
+- Updated `automation/run_local_pipeline.sh` to align with repo rule docs:
+  - uses `git rev-parse --show-toplevel` for `REPO_ROOT`,
+  - requires and sources `source_me.sh`,
+  - runs stage commands via `python3` after sourcing (instead of hardcoding `.venv/bin/python`),
+  - uses daily fetch preset (`--last-day`),
+  - writes blog output as Markdown (`out/blog_post.md`) to match current pipeline behavior.
+
+What was tested
+- `bash -n automation/run_local_pipeline.sh`
+- `source source_me.sh && pytest tests/test_shebangs.py tests/test_ascii_compliance.py -q` (pass: `2 passed`)
+
+Next actions
+1. If desired, add a `--last-week` option to `automation/run_local_pipeline.sh` for manual weekly override while keeping daily default.
+
+---
+Session Update: 2026-02-22 (Python Local Runner + Fetch Date Files + 403 Tolerance)
+
+What changed
+- Replaced shell runner with `automation/run_local_pipeline.py` (Rich-colored logs, stage timing summary, per-stage retry handling).
+- Removed legacy `automation/run_local_pipeline.sh` and updated `automation/install_launchd_pipeline.sh` to run the Python runner with `python3`.
+- Updated `README.md` launchd runner references to `automation/run_local_pipeline.py`.
+- Added `rich` to `pip_requirements.txt` for improved terminal output in the Python runner.
+- Updated `pipeline/fetch_github_data.py` to date-stamp top-level JSONL output filenames by default (for example `out/github_data_YYYY-MM-DD.jsonl`).
+- Updated `pipeline/podlib/github_client.py` to add request jitter (`time.sleep(random.random())`) and one 10-second retry on 403 responses before raising.
+
+What was tested
+- `source source_me.sh && pytest tests/` (pass: `357 passed`)
+
+Next actions
+1. Run `python3 automation/run_local_pipeline.py --last-day` locally and confirm stage logs/readability match your preference.
+2. If desired, add CLI flags to the Python runner for overriding blog/bluesky/podcast target lengths without editing code.

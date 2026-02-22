@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LABEL="com.vosslab.podcast.pipeline"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$LAUNCH_AGENTS_DIR/$LABEL.plist"
-RUN_SCRIPT="$REPO_ROOT/automation/run_local_pipeline.sh"
+RUN_SCRIPT="$REPO_ROOT/automation/run_local_pipeline.py"
 STDOUT_LOG="$REPO_ROOT/out/launchd_pipeline.log"
 STDERR_LOG="$REPO_ROOT/out/launchd_pipeline.error.log"
 GUI_DOMAIN="gui/$(id -u)"
@@ -40,7 +40,7 @@ cat > "$PLIST_PATH" <<EOF
 	<array>
 		<string>/bin/bash</string>
 		<string>-lc</string>
-		<string>cd "$REPO_ROOT" && "$RUN_SCRIPT"</string>
+		<string>cd "$REPO_ROOT" && python3 "$RUN_SCRIPT"</string>
 	</array>
 	<key>RunAtLoad</key>
 	<false/>

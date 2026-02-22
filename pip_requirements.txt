@@ -1,6 +1,7 @@
 # Core pipeline runtime
 pyyaml
 PyGithub
+rich
 numpy
 soundfile
 torch
