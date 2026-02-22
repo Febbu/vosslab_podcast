@@ -35,6 +35,26 @@ def _fetch_repos(user: str, sort: str, token: str | None) -> List[Dict[str, Any]
     return data
 
 
+def _fetch_commits(
+    full_name: str, since: datetime, until: datetime, token: str | None
+) -> List[Dict[str, Any]]:
+    url = f"https://api.github.com/repos/{full_name}/commits"
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    params = {
+        "since": since.isoformat(),
+        "until": until.isoformat(),
+        "per_page": 100,
+    }
+    resp = requests.get(url, headers=headers, params=params, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, list):
+        raise RuntimeError(f"Unexpected commits response format for {full_name}.")
+    return data
+
+
 def _summarize_repo(repo: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "name": repo.get("name"),
@@ -52,6 +72,7 @@ def _render_script(digest: Dict[str, Any]) -> str:
     window_end = digest["window_end"]
     new_repos = digest["new_repos"]
     updated = digest["updated_repos"]
+    commit_messages = digest["weekly_commit_messages"]
 
     def pick_names(items: List[Dict[str, Any]], limit: int = 5) -> str:
         names = [i["name"] for i in items[:limit] if i.get("name")]
@@ -74,6 +95,18 @@ def _render_script(digest: Dict[str, Any]) -> str:
         )
     else:
         lines.append("GUEST: No repo-level pushes recorded in the last 7 days.")
+
+    if commit_messages:
+        highlights: List[str] = []
+        for repo_commits in commit_messages[:3]:
+            repo_name = repo_commits.get("repo")
+            messages = repo_commits.get("messages", [])
+            if repo_name and messages:
+                highlights.append(f"{repo_name}: {messages[0]}")
+        if highlights:
+            lines.append(
+                "ANALYST: Weekly commit highlights - " + " | ".join(highlights) + "."
+            )
 
     lines.append("HOST: That's the week. See you next episode.")
     return "\n".join(lines) + "\n"
@@ -105,11 +138,38 @@ def main() -> None:
     ]
     updated_repos.sort(key=lambda r: r.get("pushed_at") or "", reverse=True)
 
+    weekly_commit_messages: List[Dict[str, Any]] = []
+    for repo in updated_repos:
+        full_name = repo.get("full_name")
+        if not full_name:
+            continue
+        commits = _fetch_commits(full_name, window_start, now, token)
+        messages: List[str] = []
+        for commit in commits:
+            msg = ((commit.get("commit") or {}).get("message") or "").strip()
+            if not msg:
+                continue
+            first_line = msg.splitlines()[0].strip()
+            if first_line and first_line not in messages:
+                messages.append(first_line)
+            if len(messages) >= 5:
+                break
+        if messages:
+            weekly_commit_messages.append(
+                {
+                    "repo": repo.get("name"),
+                    "full_name": full_name,
+                    "messages": messages,
+                    "count": len(messages),
+                }
+            )
+
     digest = {
         "window_start": window_start.strftime("%Y-%m-%d"),
         "window_end": now.strftime("%Y-%m-%d"),
         "new_repos": new_repos,
         "updated_repos": updated_repos,
+        "weekly_commit_messages": weekly_commit_messages,
     }
 
     os.makedirs(output_dir, exist_ok=True)

@@ -129,3 +129,45 @@ Next actions
 1. Implement modular daily pipeline (`logs -> outline -> blog -> script -> audio`) as separate scripts.
 2. Add daily GitHub Actions workflow for artifact chaining.
 3. Integrate external TTS wrapper (`darrenoakey/tts`) in the final audio step.
+
+---
+Session Update: 2026-02-22 (Weekly Commit Messages in Digest)
+
+What changed
+- Updated `fetch_and_script.py` to fetch commit history for each updated repo within the active 7-day window.
+- Added `weekly_commit_messages` to `out/digest.json`, including repo name, full name, up to 5 unique commit subject lines, and count.
+- Updated script rendering to include a short "Weekly commit highlights" line in `out/script.txt` using recent commit subjects.
+
+What was tested
+- `python3 -m py_compile fetch_and_script.py` (pass).
+- `python3 fetch_and_script.py` in this shell failed due to missing dependency: `ModuleNotFoundError: No module named 'requests'`.
+
+Next actions
+1. Install dependencies (`pip install -r requirements.txt`) in the runtime environment.
+2. Re-run `python3 fetch_and_script.py` to validate API fetches and output formatting.
+3. Confirm commit highlight phrasing is suitable for narration and adjust limits if needed.
+
+---
+Session Update: 2026-02-22 (Pipeline Redesign + Manager Plan)
+
+What changed
+- Updated `README.md` to document the new target process flow:
+  1. `fetch_github_data.py`
+  2. `outline_github_data.py`
+  3. `outline_to_blog_post.py`, `outline_to_bluesky_post.py`, `outline_to_podcast_script.py`
+  4. `script_to_audio.py`
+- Added planned output artifacts and constraints in `README.md` (500-word blog, 140-char Bluesky, 500-word N-speaker script).
+- Created planning directories `docs/active_plans/` and `docs/archive/`.
+- Added manager-grade implementation plan:
+  - `docs/active_plans/GITHUB_CONTENT_PIPELINE_MILESTONE_PLAN.md`
+  - Includes milestones, workstreams, dependency IDs, gates, migration policy, risk register, patch plan, and open decisions.
+
+What was tested
+- Verified `README.md` contains the new pipeline and output targets.
+- Verified plan document exists and includes required sections per skill guidance.
+- Noted planning context gaps in repo: `refactor_progress.md` missing and no prior plan history to reference.
+
+Next actions
+1. Approve open decisions in the plan (schema depth, canonical outline format, overflow policy, default `NUM_SPEAKERS`, audio format targets).
+2. Start implementation from Milestone M1 (`fetch_github_data.py` + JSONL contract + validation gates).
+3. Add `refactor_progress.md` so future plan updates can track active/completed/pending status cleanly.
