@@ -346,6 +346,7 @@ def generate_global_outline_with_retry(
 	outline: dict,
 	repo_summaries: list[dict],
 	max_tokens: int,
+	target_words: int = DAILY_GLOBAL_TARGET_WORDS,
 ) -> str:
 	"""
 	Generate global outline with progressive prompt shrinking on context overflow.
@@ -367,7 +368,7 @@ def generate_global_outline_with_retry(
 			repo_summaries,
 			repo_limit=repo_limit,
 			excerpt_chars=excerpt_chars,
-			target_words=DAILY_GLOBAL_TARGET_WORDS,
+			target_words=target_words,
 		)
 		try:
 			result = client.generate(
@@ -396,29 +397,27 @@ def enforce_global_outline_word_band(
 	repo_summaries: list[dict],
 	global_outline: str,
 	max_tokens: int,
+	target_words: int = DAILY_GLOBAL_TARGET_WORDS,
 ) -> str:
 	"""
-	Enforce 0.5x..2x word band around 2000-word daily target with one retry.
+	Enforce 0.5x..2x word band around target with one retry.
 	"""
 	word_count = count_words(global_outline)
-	min_words = DAILY_GLOBAL_TARGET_WORDS // 2
-	max_words = DAILY_GLOBAL_TARGET_WORDS * 2
-	if min_words <= word_count <= max_words:
+	lower_bound = max(1, target_words // 2)
+	upper_bound = target_words * 2
+	if lower_bound <= word_count <= upper_bound:
 		return global_outline
 	log_step(
 		"Global outline target miss; retrying once "
-		+ f"(words={word_count}, target={DAILY_GLOBAL_TARGET_WORDS})."
+		+ f"(words={word_count}, target={target_words})."
 	)
 	retry_prompt = (
-		"Revise this daily global outline while preserving factual details.\n"
-		+ f"Last entry was {word_count} words.\n"
-		+ f"Target about {DAILY_GLOBAL_TARGET_WORDS} words.\n"
-		+ f"Acceptable range: {min_words}-{max_words} words.\n"
-		+ "Please do better on length control.\n\n"
+		f"Your outline was {word_count} words. "
+		+ f"Rewrite to about {target_words} words.\n\n"
 		+ build_global_llm_prompt(
 			outline,
 			repo_summaries,
-			target_words=DAILY_GLOBAL_TARGET_WORDS,
+			target_words=target_words,
 		)
 	)
 	result = client.generate(
@@ -653,11 +652,13 @@ def summarize_outline_with_llm(
 	# compute total input size going into the global outline
 	total_outline_chars = sum(len(s.get("repo_outline", "")) for s in repo_summaries)
 	total_outline_words = sum(count_words(s.get("repo_outline", "")) for s in repo_summaries)
+	# scale global target: 75% of input words, capped at 2000
+	global_target = min(DAILY_GLOBAL_TARGET_WORDS, max(400, total_outline_words * 3 // 4))
 	log_step("")
 	log_step(
 		"Generating global compilation outline from repo summaries: "
 		+ f"input_chars={total_outline_chars}, input_words={total_outline_words}, "
-		+ f"target={DAILY_GLOBAL_TARGET_WORDS} words"
+		+ f"target={global_target} words"
 	)
 	if client is None:
 		client = create_llm_client(transport_name, model_override)
@@ -666,6 +667,7 @@ def summarize_outline_with_llm(
 		outline,
 		repo_summaries,
 		max_tokens=max_tokens,
+		target_words=global_target,
 	)
 	global_outline = enforce_global_outline_word_band(
 		client,
@@ -673,6 +675,7 @@ def summarize_outline_with_llm(
 		repo_summaries,
 		global_outline,
 		max_tokens=max_tokens,
+		target_words=global_target,
 	)
 	outline["llm_global_outline"] = global_outline
 	outline["llm_repo_summaries_count"] = len(selected_repos)

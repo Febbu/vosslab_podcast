@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import glob
 import os
 import subprocess
 import tempfile
@@ -63,6 +64,30 @@ def parse_args() -> argparse.Namespace:
 	)
 	args = parser.parse_args()
 	return args
+
+
+#============================================
+def resolve_latest_script(script_path: str) -> str:
+	"""
+	Fallback to latest dated script file when default path is missing.
+
+	The narration stage writes dated files like podcast_narration-2026-02-22.txt
+	but the default path is podcast_narration.txt (no date). Find the latest
+	dated match in the same directory.
+	"""
+	if os.path.isfile(script_path):
+		return script_path
+	directory = os.path.dirname(script_path)
+	# derive glob pattern from base name: podcast_narration.txt -> podcast_narration-*.txt
+	basename = os.path.basename(script_path)
+	stem, ext = os.path.splitext(basename)
+	pattern = os.path.join(directory, f"{stem}-*{ext}")
+	candidates = [p for p in glob.glob(pattern) if os.path.isfile(p)]
+	if not candidates:
+		return script_path
+	# return most recently modified
+	candidates.sort(key=os.path.getmtime, reverse=True)
+	return candidates[0]
 
 
 #============================================
@@ -132,7 +157,7 @@ def main() -> None:
 		log_step(f"Listed {len(voices)} voice(s).")
 		return
 
-	script_path = os.path.abspath(script_arg)
+	script_path = os.path.abspath(resolve_latest_script(script_arg))
 	output_path = os.path.abspath(output_arg)
 	log_step(
 		"Starting say audio stage with "

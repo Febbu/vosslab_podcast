@@ -30,6 +30,13 @@
   externalized prompt templates from `pipeline/prompts/` using `{{token}}` placeholders.
 - Created 20 prompt template files in `pipeline/prompts/` covering blog, bluesky, podcast,
   outline, and speaker personality prompts. All prompts are now editable text files.
+- Added `pipeline/podlib/audio_utils.py` shared audio utilities module with `parse_script_lines()`,
+  `get_unique_speakers()`, `build_single_voice_narration()`, `parse_say_voices()`,
+  `list_available_say_voices()`, `resolve_voice_name()`, and `convert_to_mp3()`. Both
+  `script_to_audio.py` and `script_to_audio_say.py` now use this shared module.
+- Added `resolve_latest_script()` to `pipeline/script_to_audio_say.py` that falls back to the
+  most recent dated file (e.g. `podcast_narration-2026-02-22.txt`) when the default non-dated
+  path does not exist.
 - Added Q101 radio personalities (BHOST, KCOLOR, CPRODUCER) in `pipeline/prompts/bhost.txt`,
   `kcolor.txt`, `cproducer.txt`, and `show_intro.txt`.
 - `pipeline/blog_to_podcast_script.py` now generates dual output: 3-speaker `podcast_script-*.txt`
@@ -56,7 +63,14 @@
   `--char-limit 140` override (default 280 is correct). Removed `--num-speakers` argument.
   Added `podcast_narration` to artifact list.
 - `pipeline/script_to_audio_say.py` default script path changed from `out/podcast_script.txt` to
-  `out/podcast_narration.txt` (1-speaker output for TTS).
+  `out/podcast_narration.txt` (1-speaker output for TTS). Outputs MP3 via `say` -> AIFF -> `lame`.
+- `pipeline/script_to_audio.py` (Qwen TTS) refactored to use `podlib.audio_utils` for shared
+  parsing and MP3 conversion. Outputs MP3 via WAV -> `lame`.
+- Global outline target now scales with input size: `min(2000, max(400, input_words * 0.75))`
+  instead of fixed 2000-word target. Prevents the LLM from padding short inputs.
+- `automation/run_local_pipeline.py` added `--no-continue` flag that passes through to outline
+  and blog stages to skip cached outlines and blog posts. Added `podcast_audio` stage.
+- Replaced `ffmpeg` with `lame` in `Brewfile` for AIFF/WAV to MP3 conversion.
 - Renamed test files: `test_outline_to_bluesky_post.py` to `test_blog_to_bluesky_post.py`,
   `test_outline_to_podcast_script.py` to `test_blog_to_podcast_script.py`. Updated imports,
   fixtures, and assertions.
