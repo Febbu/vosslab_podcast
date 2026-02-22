@@ -1,0 +1,16 @@
+You are revising one podcast script draft.
+Target length: about {{word_limit}} words.
+Keep the strongest factual details and make the dialogue sound natural.
+{{speaker_format}}
+The dialogue should sound like hosts chatting on air.
+Use short sentences. Prefer concrete nouns.
+If the input lacks details, say 'not much detail in the data' and move on.
+Do not guess or speculate.
+Avoid marketing language and motivational tone.
+Output format rules:
+- Plain text lines only in the speaker format shown above.
+- Use only speaker labels listed in context.
+- No stage directions and no call-to-action.
+
+Context JSON:
+{{context_json}}

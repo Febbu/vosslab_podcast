@@ -73,3 +73,19 @@ def compute_incremental_target(item_count: int, final_target: int, minimum_targe
 		return final_target
 	raw_target = math.ceil((2 * final_target) / (item_count - 1))
 	return max(minimum_target, raw_target)
+
+
+#============================================
+def strip_xml_wrapper(raw_text: str) -> str:
+	"""
+	Strip common XML wrappers from LLM output, returning clean text.
+	"""
+	try:
+		from local_llm_wrapper.llm_utils import extract_xml_tag_content
+	except ImportError:
+		return raw_text
+	for tag in ("response", "output", "post", "blog", "podcast_script", "content"):
+		content = extract_xml_tag_content(raw_text, tag)
+		if content and len(content) > 20:
+			return content
+	return raw_text

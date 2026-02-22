@@ -10,6 +10,9 @@ from datetime import datetime
 from datetime import timezone
 
 from podlib import pipeline_settings
+from podlib import outline_llm
+
+import prompt_loader
 
 
 REPO_SLUG_RE = re.compile(r"[^a-z0-9._-]+")
@@ -196,23 +199,13 @@ def build_repo_llm_prompt(outline: dict, bucket: dict, rank: int, repo_total: in
 	"""
 	context = build_repo_context(bucket)
 	context_json = json.dumps(context, ensure_ascii=True, indent=2)
-	prompt = (
-		"You are summarizing one repository from a daily engineering dataset.\n"
-		"Write a detailed outline in plain text using section headers and bullet points.\n"
-		"Required sections:\n"
-		"1. Executive Summary\n"
-		"2. Key Workstreams\n"
-		"3. Notable Commits\n"
-		"4. Issues and Pull Requests\n"
-		"5. Risks or Unknowns\n"
-		"6. Suggested Next Actions\n"
-		"Do not invent repo names or metrics. Use only provided data.\n\n"
-		f"User: {outline.get('user', 'unknown')}\n"
-		f"Window: {outline.get('window_start', '')} -> {outline.get('window_end', '')}\n"
-		f"Repo rank: {rank} of {repo_total}\n\n"
-		"Repository data JSON:\n"
-		f"{context_json}\n"
-	)
+	template = prompt_loader.load_prompt("outline_repo.txt")
+	prompt = prompt_loader.render_prompt(template, {
+		"user": outline.get("user", "unknown"),
+		"window_start": outline.get("window_start", ""),
+		"window_end": outline.get("window_end", ""),
+		"context_json": context_json,
+	})
 	return prompt
 
 
@@ -220,22 +213,22 @@ def build_repo_llm_prompt(outline: dict, bucket: dict, rank: int, repo_total: in
 def build_repo_llm_prompt_with_target(
 	outline: dict,
 	bucket: dict,
-	rank: int,
-	repo_total: int,
 	target_words: int,
 ) -> str:
 	"""
 	Build one repo-specific LLM prompt with target word guidance.
 	"""
-	base = build_repo_llm_prompt(outline, bucket, rank, repo_total)
-	target_line = f"Target length: about {target_words} words.\n"
-	return base.replace(
-		"Do not invent repo names or metrics. Use only provided data.\n\n",
-		"Do not invent repo names or metrics. Use only provided data.\n"
-		+ target_line
-		+ "Keep output readable and concise while preserving specific evidence.\n\n",
-		1,
-	)
+	context = build_repo_context(bucket)
+	context_json = json.dumps(context, ensure_ascii=True, indent=2)
+	template = prompt_loader.load_prompt("outline_repo_targeted.txt")
+	prompt = prompt_loader.render_prompt_with_target(template, {
+		"user": outline.get("user", "unknown"),
+		"window_start": outline.get("window_start", ""),
+		"window_end": outline.get("window_end", ""),
+		"target_words": str(target_words),
+		"context_json": context_json,
+	}, target_value=str(target_words), unit="words", document_name="repo outline")
+	return prompt
 
 
 #============================================
@@ -249,12 +242,45 @@ def count_words(text: str) -> int:
 #============================================
 def compute_repo_outline_target_words(repo_count: int) -> int:
 	"""
-	Compute per-repo target as max(750, ceil(2000/(N-1))).
+	Compute per-repo ceiling target as max(750, ceil(2000/(N-1))).
 	"""
 	if repo_count <= 1:
 		return DAILY_GLOBAL_TARGET_WORDS
 	calculated = math.ceil(DAILY_GLOBAL_TARGET_WORDS / (repo_count - 1))
 	return max(MIN_REPO_TARGET_WORDS, calculated)
+
+
+#============================================
+def compute_repo_word_target(bucket: dict, ceiling: int) -> int:
+	"""
+	Scale per-repo word target based on input data richness.
+
+	Estimates input word count from total characters (chars / 5) across
+	commit messages, issue titles, and PR titles. For input under 1500
+	estimated words, target is 50% of input words. For larger inputs
+	the ceiling from compute_repo_outline_target_words applies.
+
+	Args:
+		bucket: repo activity bucket with commit_messages, issue_titles, etc.
+		ceiling: maximum word target (from compute_repo_outline_target_words).
+
+	Returns:
+		Scaled word target clamped between 100 and ceiling.
+	"""
+	CHARS_PER_WORD = 5
+	# sum total input characters from commit messages, issue titles, PR titles
+	msg_chars = sum(len(m) for m in bucket.get("commit_messages", []))
+	issue_chars = sum(len(t) for t in bucket.get("issue_titles", []))
+	pr_chars = sum(len(t) for t in bucket.get("pull_request_titles", []))
+	input_chars = msg_chars + issue_chars + pr_chars
+	# estimate input word count from character total
+	input_words = input_chars // CHARS_PER_WORD
+	# for input under 1500 words, target 50% of input words
+	if input_words < 1500:
+		scaled = max(100, input_words // 2)
+	else:
+		scaled = ceiling
+	return min(scaled, ceiling)
 
 
 #============================================
@@ -291,19 +317,11 @@ def build_global_llm_prompt(
 		"notable_commit_messages": list(outline.get("notable_commit_messages", []))[:40],
 	}
 	context_json = json.dumps(context, ensure_ascii=True, indent=2)
-	prompt = (
-		"You are creating a daily cross-repo engineering outline.\n"
-		"Write a detailed plain-text outline with these sections:\n"
-		f"Target length: about {target_words} words.\n"
-		"1. Day Overview\n"
-		"2. Top Repository Highlights\n"
-		"3. Cross-Repo Patterns\n"
-		"4. Risks and Follow-up\n"
-		"5. Next-Day Focus\n"
-		"Do not invent counts or repository names.\n\n"
-		"Context JSON:\n"
-		f"{context_json}\n"
-	)
+	template = prompt_loader.load_prompt("outline_global.txt")
+	prompt = prompt_loader.render_prompt_with_target(template, {
+		"target_words": str(target_words),
+		"context_json": context_json,
+	}, target_value=str(target_words), unit="words", document_name="daily outline")
 	return prompt
 
 
@@ -352,11 +370,13 @@ def generate_global_outline_with_retry(
 			target_words=DAILY_GLOBAL_TARGET_WORDS,
 		)
 		try:
-			return client.generate(
+			result = client.generate(
 				prompt=prompt,
 				purpose="daily global outline",
 				max_tokens=max_tokens,
 			).strip()
+			result = outline_llm.strip_xml_wrapper(result)
+			return result
 		except RuntimeError as error:
 			last_error = error
 			if not is_context_window_error(error):
@@ -401,11 +421,13 @@ def enforce_global_outline_word_band(
 			target_words=DAILY_GLOBAL_TARGET_WORDS,
 		)
 	)
-	return client.generate(
+	result = client.generate(
 		prompt=retry_prompt,
 		purpose="daily global outline retry",
 		max_tokens=max_tokens,
 	).strip()
+	result = outline_llm.strip_xml_wrapper(result)
+	return result
 
 
 #============================================
@@ -534,6 +556,7 @@ def summarize_outline_with_llm(
 		+ f"{repo_target_words} (formula=max(750, ceil(2000/(N-1))), N={len(selected_repos)})"
 	)
 	log_step(f"Summarizing {len(selected_repos)} repo(s) out of {repo_total} total.")
+	log_step("")
 	cache_hits = 0
 	cached_repo_outlines: dict[str, str] = {}
 	if continue_mode:
@@ -549,38 +572,63 @@ def summarize_outline_with_llm(
 	client = None
 	for rank, bucket in enumerate(selected_repos, start=1):
 		repo_name = bucket.get("repo_full_name", "")
+		# scale word target per repo based on input data richness
+		scaled_target = compute_repo_word_target(bucket, repo_target_words)
+		# log input stats driving the scaled target
+		msg_chars = sum(len(m) for m in bucket.get("commit_messages", []))
+		issue_chars = sum(len(t) for t in bucket.get("issue_titles", []))
+		pr_chars = sum(len(t) for t in bucket.get("pull_request_titles", []))
+		input_chars = msg_chars + issue_chars + pr_chars
+		log_step(
+			f"Repo {rank}/{len(selected_repos)} {repo_name}: "
+			+ f"input_chars={input_chars}, est_words={input_chars // 5}, "
+			+ f"scaled_target={scaled_target}, ceiling={repo_target_words}"
+		)
 		repo_outline = cached_repo_outlines.get(repo_name, "")
 		if repo_outline:
-			cache_hits += 1
-			log_step(f"Reusing cached repo outline {rank}/{len(selected_repos)}: {repo_name}")
-		else:
+			# validate cached outline against scaled word target guardrails
+			cached_word_count = count_words(repo_outline)
+			cache_lower = max(1, scaled_target // 2)
+			cache_upper = scaled_target * 2
+			if cache_lower <= cached_word_count <= cache_upper:
+				cache_hits += 1
+				log_step(f"Reusing cached repo outline {rank}/{len(selected_repos)}: {repo_name}")
+			else:
+				log_step(
+					f"Rejecting cached repo outline for {repo_name}; "
+					+ f"words={cached_word_count} outside guardrail "
+					+ f"[{cache_lower}-{cache_upper}] (target={scaled_target})"
+				)
+				repo_outline = ""
+		if not repo_outline:
 			if client is None:
 				client = create_llm_client(transport_name, model_override)
-			log_step(f"Generating repo outline {rank}/{len(selected_repos)}: {repo_name}")
+			log_step(
+				f"Generating repo outline {rank}/{len(selected_repos)}: "
+				+ f"{repo_name} (target={scaled_target} words)"
+			)
 			prompt = build_repo_llm_prompt_with_target(
 				outline,
 				bucket,
-				rank,
-				repo_total,
-				repo_target_words,
+				scaled_target,
 			)
 			repo_outline = client.generate(
 				prompt=prompt,
 				purpose="daily repo outline",
 				max_tokens=max_tokens,
 			).strip()
+			repo_outline = outline_llm.strip_xml_wrapper(repo_outline)
 			repo_word_count = count_words(repo_outline)
-			lower_bound = max(1, repo_target_words // 2)
-			upper_bound = repo_target_words * 2
+			lower_bound = max(1, scaled_target // 2)
+			upper_bound = scaled_target * 2
 			if (repo_word_count < lower_bound) or (repo_word_count > upper_bound):
 				log_step(
 					"Repo outline target miss; retrying once "
-					+ f"({repo_name}: words={repo_word_count}, target={repo_target_words})."
+					+ f"({repo_name}: words={repo_word_count}, target={scaled_target})."
 				)
 				retry_prompt = (
-					"Revise the repo outline while preserving factual details.\n"
-					+ f"Last entry was {repo_word_count} words, target is about {repo_target_words} words.\n"
-					+ "Please do better.\n\n"
+					f"Your outline was {repo_word_count} words. "
+					+ f"Rewrite to about {scaled_target} words.\n\n"
 					+ prompt
 				)
 				repo_outline = client.generate(
@@ -588,10 +636,11 @@ def summarize_outline_with_llm(
 					purpose="daily repo outline retry",
 					max_tokens=max_tokens,
 				).strip()
+				repo_outline = outline_llm.strip_xml_wrapper(repo_outline)
 		bucket["llm_repo_outline"] = repo_outline
 		log_step(
 			f"Completed repo outline for {repo_name}; chars={len(repo_outline)}, "
-			+ f"words={count_words(repo_outline)}, target={repo_target_words}"
+			+ f"words={count_words(repo_outline)}, target={scaled_target}"
 		)
 		repo_summaries.append(
 			{
@@ -601,7 +650,15 @@ def summarize_outline_with_llm(
 			}
 		)
 
-	log_step("Generating global compilation outline from repo summaries.")
+	# compute total input size going into the global outline
+	total_outline_chars = sum(len(s.get("repo_outline", "")) for s in repo_summaries)
+	total_outline_words = sum(count_words(s.get("repo_outline", "")) for s in repo_summaries)
+	log_step("")
+	log_step(
+		"Generating global compilation outline from repo summaries: "
+		+ f"input_chars={total_outline_chars}, input_words={total_outline_words}, "
+		+ f"target={DAILY_GLOBAL_TARGET_WORDS} words"
+	)
 	if client is None:
 		client = create_llm_client(transport_name, model_override)
 	global_outline = generate_global_outline_with_retry(
@@ -727,9 +784,11 @@ def parse_jsonl_to_outline(input_path: str) -> dict:
 				totals["commit_records"] += 1
 				bucket["commit_count"] += 1
 				message = record.get("message") or ""
-				first_line = message.splitlines()[0].strip() if message else ""
-				if first_line:
-					bucket["commit_messages"].append(first_line)
+				# keep first 3 non-empty lines for richer commit context
+				raw_lines = [ln.strip() for ln in message.splitlines() if ln.strip()]
+				kept = " ".join(raw_lines[:3])
+				if kept:
+					bucket["commit_messages"].append(kept)
 				continue
 
 			if record_type == "issue":

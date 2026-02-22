@@ -92,7 +92,8 @@ def test_parse_jsonl_to_outline(tmp_path) -> None:
 	assert outline["totals"]["pull_request_records"] == 1
 	assert outline["repo_activity"][0]["repo_full_name"] == "vosslab/alpha_repo"
 	assert outline["repo_activity"][0]["total_activity"] == 3
-	assert outline["notable_commit_messages"][0] == "add parser stage"
+	# commit truncation now keeps first 3 non-empty lines joined
+	assert outline["notable_commit_messages"][0] == "add parser stage extra details"
 
 
 #============================================
@@ -286,7 +287,14 @@ def test_summarize_outline_with_llm_reuses_cached_repo(monkeypatch, tmp_path) ->
 		"window_end": "2026-02-22",
 		"repo_activity": {
 			"repo_full_name": "vosslab/repo_cached",
-			"llm_repo_outline": "CACHED SUMMARY",
+			"llm_repo_outline": (
+				"Executive Summary: Refactored authentication module to use token based "
+				"sessions and added unit tests for the new session handler middleware "
+				"layer. Key Workstreams: Authentication refactor and test coverage. "
+				"Notable Commits: refactored authentication module, added unit tests. "
+				"Issues: upgrade auth library to version three. "
+				"Summary: Main focus was the auth module refactor with test additions."
+			),
 		},
 	}
 	with open(tmp_path / "001_repo_cached.json", "w", encoding="utf-8") as handle:
@@ -324,8 +332,11 @@ def test_summarize_outline_with_llm_reuses_cached_repo(monkeypatch, tmp_path) ->
 				"pull_request_count": 0,
 				"total_activity": 3,
 				"latest_event_time": "2026-02-21T12:00:00+00:00",
-				"commit_messages": ["m1"],
-				"issue_titles": ["i1"],
+				"commit_messages": [
+					"refactored authentication module to use token based sessions",
+					"added unit tests for the new session handler middleware layer",
+				],
+				"issue_titles": ["upgrade auth library to version three"],
 				"pull_request_titles": [],
 			},
 			{
@@ -353,7 +364,9 @@ def test_summarize_outline_with_llm_reuses_cached_repo(monkeypatch, tmp_path) ->
 		repo_shards_dir=str(tmp_path),
 		continue_mode=True,
 	)
-	assert result["repo_activity"][0]["llm_repo_outline"] == "CACHED SUMMARY"
+	# cached outline should be reused when it passes the word-count guardrail
+	cached_outline = result["repo_activity"][0]["llm_repo_outline"]
+	assert "Refactored authentication module" in cached_outline
 	assert result["repo_activity"][1]["llm_repo_outline"] == "NEW REPO SUMMARY"
 	assert result["llm_cached_repo_outline_count"] == 1
 	assert result["llm_generated_repo_outline_count"] == 1

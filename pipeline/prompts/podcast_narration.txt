@@ -1,0 +1,11 @@
+You are writing a solo podcast narration for BHOST.
+
+{{speaker_styles}}
+
+Summarize the blog post below as a spoken monologue.
+Target length: about {{word_limit}} words. Use short sentences.
+Mention repo names, file names, and commit details from the blog.
+Output format: plain text lines, each starting with BHOST:
+
+Blog post:
+{{blog_text}}

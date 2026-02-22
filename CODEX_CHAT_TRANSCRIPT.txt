@@ -1119,3 +1119,18 @@ What was tested
 
 Next actions
 1. If desired, expose daily/global target words in settings.yaml while keeping the formula as default behavior.
+
+---
+Session Update: 2026-02-21 (--no-api-calls local runner mode)
+
+What changed
+- Updated `/Users/vosslab/nsh/vosslab_podcast/automation/run_local_pipeline.py` with `--no-api-calls` mode.
+- In this mode, fetch stage is skipped and the runner reuses latest cached fetch JSONL from user-scoped output paths, avoiding GitHub API calls while testing downstream stages.
+- Added fail-fast error when `--no-api-calls` is requested but no cached fetch file exists.
+- Updated `/Users/vosslab/nsh/vosslab_podcast/docs/CHANGELOG.md` with this behavior change and validation note.
+
+What was tested
+- `source source_me.sh && pytest tests/ -q` (pass: `378 passed`)
+
+Next actions
+1. Optionally add a short README usage example for `automation/run_local_pipeline.py --no-api-calls`.

@@ -28,6 +28,7 @@ REQUIREMENT_FILES = (
 	os.path.join("config_files", "pip_extras.txt"),
 )
 LOCAL_IMPORT_WHITELIST = {
+	"prompt_loader",
 }
 IMPORT_REQUIREMENT_ALIASES = {
 	"applefoundationmodels": "apple-foundation-models",

@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 import argparse
 import os
-import re
-import shutil
 import subprocess
 import tempfile
 from datetime import datetime
 
+from podlib import audio_utils
 from podlib import pipeline_settings
 
 
-SAY_LOCALE_TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.@-]*$")
-DEFAULT_SCRIPT_PATH = "out/podcast_script.txt"
-DEFAULT_OUTPUT_PATH = "out/episode_siri.aiff"
+DEFAULT_SCRIPT_PATH = "out/podcast_narration.txt"
+DEFAULT_OUTPUT_PATH = "out/podcast_audio.mp3"
 
 
 #============================================
@@ -40,7 +38,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--output",
 		default=DEFAULT_OUTPUT_PATH,
-		help="Path to output audio file (AIFF recommended).",
+		help="Path to output audio file (.mp3 or .aiff).",
 	)
 	parser.add_argument(
 		"--settings",
@@ -68,124 +66,6 @@ def parse_args() -> argparse.Namespace:
 
 
 #============================================
-def parse_script_lines(script_text: str) -> list[tuple[str, str]]:
-	"""
-	Parse ROLE: text lines from script input.
-	"""
-	lines: list[tuple[str, str]] = []
-	for raw in script_text.splitlines():
-		line = raw.strip()
-		if not line:
-			continue
-		if ":" not in line:
-			continue
-		speaker, text = line.split(":", 1)
-		speaker = speaker.strip().upper()
-		text = text.strip()
-		if not speaker or not text:
-			continue
-		lines.append((speaker, text))
-	return lines
-
-
-#============================================
-def get_unique_speakers(lines: list[tuple[str, str]]) -> list[str]:
-	"""
-	Return speaker labels in first-seen order.
-	"""
-	labels: list[str] = []
-	for speaker, _text in lines:
-		if speaker not in labels:
-			labels.append(speaker)
-	return labels
-
-
-#============================================
-def build_single_voice_narration(script_text: str, lines: list[tuple[str, str]]) -> str:
-	"""
-	Build one narration block from speaker lines or raw text.
-	"""
-	if lines:
-		parts = [text.strip() for _speaker, text in lines if text.strip()]
-		return " ".join(parts).strip()
-	return " ".join(script_text.split()).strip()
-
-
-#============================================
-def parse_say_voices(raw_output: str) -> list[str]:
-	"""
-	Parse `say -v ?` output into ordered voice names.
-	"""
-	voices: list[str] = []
-	for line in raw_output.splitlines():
-		text = line.rstrip()
-		if "#" not in text:
-			continue
-		left = text.split("#", 1)[0].strip()
-		if not left:
-			continue
-		parts = left.split()
-		if len(parts) < 2:
-			continue
-		locale_candidate = parts[-1]
-		if ("_" not in locale_candidate) or (not SAY_LOCALE_TOKEN_RE.match(locale_candidate)):
-			continue
-		voice_name = " ".join(parts[:-1]).strip()
-		if voice_name and (voice_name not in voices):
-			voices.append(voice_name)
-	return voices
-
-
-#============================================
-def list_available_say_voices() -> list[str]:
-	"""
-	Query installed say voices from the local system.
-	"""
-	if shutil.which("say") is None:
-		raise RuntimeError("macOS `say` command is required but not found.")
-	result = subprocess.run(
-		["say", "-v", "?"],
-		check=True,
-		capture_output=True,
-		text=True,
-	)
-	return parse_say_voices(result.stdout)
-
-
-#============================================
-def resolve_voice_name(requested_voice: str, voices: list[str]) -> str:
-	"""
-	Resolve configured voice against installed voices.
-	"""
-	requested = requested_voice.strip()
-	if not requested:
-		return ""
-	for voice in voices:
-		if voice.lower() == requested.lower():
-			return voice
-	if requested.lower() == "siri":
-		for voice in voices:
-			if "siri" in voice.lower():
-				return voice
-		return ""
-	partial = [voice for voice in voices if requested.lower() in voice.lower()]
-	if len(partial) == 1:
-		return partial[0]
-	if len(partial) > 1:
-		raise RuntimeError(
-			"Voice name is ambiguous: "
-			+ requested
-			+ ". Matches: "
-			+ ", ".join(partial[:8])
-		)
-	raise RuntimeError(
-		"Voice not found: "
-		+ requested
-		+ ". Use --list-voices to inspect installed names."
-	)
-
-
-#============================================
 def run_say_to_file(
 	narration: str,
 	output_path: str,
@@ -193,7 +73,7 @@ def run_say_to_file(
 	rate_wpm: int,
 ) -> None:
 	"""
-	Run macOS say command to synthesize one audio file.
+	Run macOS say command to synthesize one AIFF audio file.
 	"""
 	fd, tmp_path = tempfile.mkstemp(prefix="vosslab_say_", suffix=".txt")
 	os.close(fd)
@@ -246,7 +126,7 @@ def main() -> None:
 	log_step(f"Using settings file: {settings_path}")
 	if args.list_voices:
 		log_step("Listing installed macOS say voices.")
-		voices = list_available_say_voices()
+		voices = audio_utils.list_available_say_voices()
 		for voice in voices:
 			print(voice)
 		log_step(f"Listed {len(voices)} voice(s).")
@@ -265,8 +145,8 @@ def main() -> None:
 	log_step("Loading script text.")
 	with open(script_path, "r", encoding="utf-8") as handle:
 		script_text = handle.read()
-	lines = parse_script_lines(script_text)
-	speakers = get_unique_speakers(lines)
+	lines = audio_utils.parse_script_lines(script_text)
+	speakers = audio_utils.get_unique_speakers(lines)
 	if speakers:
 		log_step(f"Detected {len(speakers)} speaker label(s) in script.")
 		if len(speakers) > 1:
@@ -274,13 +154,13 @@ def main() -> None:
 	else:
 		log_step("No ROLE: lines detected; using raw script text as narration.")
 
-	narration = build_single_voice_narration(script_text, lines)
+	narration = audio_utils.build_single_voice_narration(script_text, lines)
 	if not narration:
 		raise RuntimeError("Script content is empty after normalization.")
 
 	log_step("Resolving macOS voice.")
-	voices = list_available_say_voices()
-	resolved_voice = resolve_voice_name(requested_voice, voices)
+	voices = audio_utils.list_available_say_voices()
+	resolved_voice = audio_utils.resolve_voice_name(requested_voice, voices)
 	if requested_voice.strip().lower() == "siri" and not resolved_voice:
 		log_step("No explicit Siri voice detected; using system default say voice.")
 	else:
@@ -289,13 +169,31 @@ def main() -> None:
 	output_dir = os.path.dirname(output_path)
 	if output_dir:
 		os.makedirs(output_dir, exist_ok=True)
+
+	# determine if MP3 conversion is needed
+	wants_mp3 = output_path.lower().endswith(".mp3")
+	if wants_mp3:
+		# say produces AIFF; convert to MP3 afterward
+		aiff_path = output_path.rsplit(".", 1)[0] + ".aiff"
+	else:
+		aiff_path = output_path
+
 	run_say_to_file(
 		narration=narration,
-		output_path=output_path,
+		output_path=aiff_path,
 		voice_name=resolved_voice,
 		rate_wpm=rate_wpm,
 	)
-	log_step(f"Wrote audio output: {output_path}")
+	log_step(f"Wrote AIFF audio: {aiff_path}")
+
+	if wants_mp3:
+		log_step("Converting AIFF to MP3 with lame.")
+		audio_utils.convert_to_mp3(aiff_path, output_path)
+		# clean up intermediate AIFF
+		os.remove(aiff_path)
+		log_step(f"Wrote MP3 audio: {output_path}")
+	else:
+		log_step(f"Wrote audio output: {output_path}")
 
 
 if __name__ == "__main__":

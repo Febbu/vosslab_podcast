@@ -70,10 +70,14 @@ def parse_args() -> argparse.Namespace:
 		help="Wait seconds before retrying a failed stage (default: 10).",
 	)
 	parser.add_argument(
-		"--num-speakers",
-		type=int,
-		default=3,
-		help="Speaker count for podcast script stage (default: 3).",
+		"--no-api-calls",
+		action="store_true",
+		help="Skip fetch stage and reuse latest cached fetch JSONL to avoid GitHub API calls.",
+	)
+	parser.add_argument(
+		"--no-continue",
+		action="store_true",
+		help="Regenerate all LLM outputs from scratch instead of reusing cached outlines/drafts.",
 	)
 	return parser.parse_args()
 
@@ -185,7 +189,7 @@ def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]
 				"pipeline/github_data_to_outline.py",
 				"--settings",
 				args.settings,
-			],
+			] + (["--no-continue"] if args.no_continue else []),
 		),
 		(
 			"outline_compilation",
@@ -206,33 +210,38 @@ def make_stage_commands(args: argparse.Namespace) -> list[tuple[str, list[str]]]
 				args.settings,
 				"--word-limit",
 				"500",
-			],
+			] + (["--no-continue"] if args.no_continue else []),
 		),
 		(
 			"bluesky",
 			[
 				"python3",
-				"pipeline/outline_to_bluesky_post.py",
+				"pipeline/blog_to_bluesky_post.py",
 				"--settings",
 				args.settings,
-				"--char-limit",
-				"140",
 			],
 		),
 		(
 			"podcast_script",
 			[
 				"python3",
-				"pipeline/outline_to_podcast_script.py",
+				"pipeline/blog_to_podcast_script.py",
 				"--settings",
 				args.settings,
-				"--num-speakers",
-				str(args.num_speakers),
-				"--word-limit",
-				"500",
+			],
+		),
+		(
+			"podcast_audio",
+			[
+				"python3",
+				"pipeline/script_to_audio_say.py",
+				"--settings",
+				args.settings,
 			],
 		),
 	]
+	if args.no_api_calls:
+		stages = [item for item in stages if item[0] != "fetch"]
 	return stages
 
 
@@ -340,24 +349,22 @@ def render_artifact_list(
 	blog_path = find_latest_match(user_out, "blog_post_*.md")
 	bluesky_path = find_latest_match(user_out, "bluesky_post-*.txt")
 	podcast_script_path = find_latest_match(user_out, "podcast_script-*.txt")
-	expected_audio_mp3 = os.path.join(user_out, f"podcast_audio-{date_text}.mp3")
+	podcast_narration_path = find_latest_match(user_out, "podcast_narration-*.txt")
+	podcast_audio_path = find_latest_match(user_out, "podcast_audio*.mp3")
 
 	log_step(console, "Final artifacts:", style="bold cyan")
 	for label, path in [
 		("blog", blog_path),
 		("bluesky", bluesky_path),
 		("podcast_script", podcast_script_path),
+		("podcast_narration", podcast_narration_path),
+		("podcast_audio", podcast_audio_path),
 	]:
 		if not path:
 			console.print(f"- {label}: (missing)", style="yellow")
 			continue
 		relative = os.path.relpath(path, repo_root)
 		console.print(f"- {relative}", style="green")
-	relative_audio = os.path.relpath(expected_audio_mp3, repo_root)
-	if os.path.isfile(expected_audio_mp3):
-		console.print(f"- {relative_audio}", style="green")
-	else:
-		console.print(f"- {relative_audio} (not generated in this run)", style="yellow")
 
 
 #============================================
@@ -379,9 +386,16 @@ def main() -> None:
 	log_step(console, f"Window mode: {resolve_window_flag(args)}", style="cyan")
 	user = load_settings_username(repo_root, args.settings)
 	log_step(console, f"Using GitHub user: {user}", style="cyan")
+	if args.no_api_calls:
+		log_step(console, "Mode: --no-api-calls enabled (fetch stage skipped).", style="yellow")
 	date_text = datetime.now().astimezone().strftime("%Y-%m-%d")
 	log_step(console, f"Using local date stamp for fetch output: {date_text}", style="cyan")
 	fetch_output_path = resolve_latest_fetch_output_path(repo_root, user)
+	if args.no_api_calls and (not os.path.isfile(fetch_output_path)):
+		raise RuntimeError(
+			"No cached fetch output found for --no-api-calls mode. "
+			+ f"Expected under {os.path.join(repo_root, 'out', user)}."
+		)
 
 	stage_rows: list[tuple[str, str, str]] = []
 	for stage_name, stage_command in make_stage_commands(args):

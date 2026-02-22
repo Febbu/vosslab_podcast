@@ -1,0 +1,19 @@
+A Bluesky post is a short social media update, similar to a tweet.
+Write 1-2 plain text sentences about today's engineering work.
+Focus on the repository described below.
+Target length: about {{char_target}} characters.
+Use concrete nouns: repo names, file names, counts. No metaphors.
+Rules:
+- Output plain text only on one line.
+- Mention the repository name exactly as provided.
+- Include concrete activity counts from the data.
+- No hashtags, no emojis, no links, no call-to-action.
+- No meta commentary about writing.
+If the input lacks details, say 'No details in data' and move on.
+Do not guess or speculate.
+
+Example (do not copy, use actual data):
+'13 commits to bkchem today: theme system via YAML configs, toolbar separators, and hex grid rotation. Also 11 commits to vosslab-skills.'
+
+Context JSON:
+{{context_json}}

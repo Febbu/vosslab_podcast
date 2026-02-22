@@ -842,6 +842,7 @@ def main() -> None:
 		"pull_request": 0,
 		"repo_changelog": 0,
 	}
+	repo_commit_totals: list[tuple[str, int]] = []
 	daily_buckets: dict[str, list[dict]] = {}
 	day_keys = build_window_day_keys(window_start, window_days, reset_tz=day_reset_tz)
 	fallback_day = day_keys[-1] if day_keys else date_text
@@ -933,6 +934,7 @@ def main() -> None:
 			if repo_commit_count < 1:
 				log_step(f"Skipped repo: {repo_full_name}")
 				continue
+			repo_commit_totals.append((repo_full_name, repo_commit_count))
 
 			if (not args.skip_changelog) and (repo_recent or repo_activity_count > 0):
 				ref_name = repo.get("default_branch") or ""
@@ -997,6 +999,12 @@ def main() -> None:
 		+ 2
 	)
 	log_step(f"Wrote {output_path} ({total_records} records)")
+	if repo_commit_totals:
+		log_step("Repo commit summary:")
+		for repo_full_name, commit_count in repo_commit_totals:
+			log_step(f"{repo_full_name} ({commit_count} commits)")
+	else:
+		log_step("Repo commit summary: no repos with commits in this window.")
 	log_step(
 		"Daily cache files written: "
 		+ f"{len(written_daily_files)} in {os.path.abspath(scoped_daily_cache_dir)}"

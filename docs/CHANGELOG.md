@@ -1,5 +1,107 @@
 ## 2026-02-22
 
+### Additions and New Features
+- Added `render_prompt_with_target()` to `pipeline/prompt_loader.py`. Appends a closing
+  "Target N units for this document_name." line to every rendered prompt so the LLM sees the
+  length constraint both near the top and as the final line before generating.
+- Added `compute_repo_word_target()` to `pipeline/github_data_to_outline.py` that scales per-repo
+  word targets based on input data richness (input_chars / 5 = est words, target = 50% of input
+  words when under 1500). Repos with little input data get proportionally lower targets instead
+  of the fixed 750-word ceiling.
+- Cache word-count guardrails now use the scaled per-repo target from `compute_repo_word_target()`
+  instead of the fixed ceiling target.
+- Global outline log now reports total input size (chars and words) from repo summaries.
+
+### Behavior or Interface Changes
+- All 12 prompt render call sites across `github_data_to_outline.py`, `outline_to_blog_post.py`,
+  `blog_to_podcast_script.py`, and `blog_to_bluesky_post.py` switched from `render_prompt()` to
+  `render_prompt_with_target()` for consistent closing target reminders.
+- Prompts now only show the target number to the LLM. Removed min/max word leaking from
+  `pipeline/prompts/blog_expand.txt` and `outline_repo_targeted.txt`.
+- Simplified `outline_repo_targeted.txt`: removed verbose examples and "expand every commit"
+  instruction that fought the word target. Added "do not pad, paraphrase, or repeat" directive.
+- Retry prompt for repo outlines now gives direction-aware feedback (too short vs too long)
+  without revealing the guardrail band numbers.
+
+### Fixes and Maintenance
+- Added [docs/REPO_REVIEW-2026-02-22.md](docs/REPO_REVIEW-2026-02-22.md) with a deep-dive review
+  of pipeline output quality, LLM prompt effectiveness, and prioritized recommendations.
+- Added `pipeline/prompt_loader.py` with `load_prompt()` and `render_prompt()` for loading
+  externalized prompt templates from `pipeline/prompts/` using `{{token}}` placeholders.
+- Created 20 prompt template files in `pipeline/prompts/` covering blog, bluesky, podcast,
+  outline, and speaker personality prompts. All prompts are now editable text files.
+- Added Q101 radio personalities (BHOST, KCOLOR, CPRODUCER) in `pipeline/prompts/bhost.txt`,
+  `kcolor.txt`, `cproducer.txt`, and `show_intro.txt`.
+- `pipeline/blog_to_podcast_script.py` now generates dual output: 3-speaker `podcast_script-*.txt`
+  and 1-speaker `podcast_narration-*.txt` (BHOST monologue for macOS `say` TTS). Added
+  `--skip-narration` flag to disable the solo narration pass.
+- Added `tests/test_prompt_loader.py` with 6 tests for prompt loading and rendering.
+
+### Behavior or Interface Changes
+- Renamed `pipeline/outline_to_bluesky_post.py` to `pipeline/blog_to_bluesky_post.py` (via
+  `git mv`). Bluesky stage now reads blog markdown instead of raw outline JSON, using single-pass
+  LLM summarization instead of per-repo drafts.
+- Renamed `pipeline/outline_to_podcast_script.py` to `pipeline/blog_to_podcast_script.py` (via
+  `git mv`). Podcast stage now reads blog markdown instead of raw outline JSON.
+- Replaced SPEAKER_1/SPEAKER_2/SPEAKER_3 labels with Q101 personality names BHOST/KCOLOR/CPRODUCER
+  in podcast script generation.
+- All prompt-building functions across `outline_to_blog_post.py`, `blog_to_bluesky_post.py`,
+  `blog_to_podcast_script.py`, and `github_data_to_outline.py` now use `prompt_loader` instead
+  of inline f-strings.
+- Removed `repo_index` and `repo_total` from blog per-repo prompt context to stop blog posts
+  from parroting "repository N of M".
+- `pipeline/blog_to_bluesky_post.py` added hardened XML tag stripping regex fallback that removes
+  all XML-like tags from bluesky output.
+- `automation/run_local_pipeline.py` updated stage commands to use renamed pipeline files. Removed
+  `--char-limit 140` override (default 280 is correct). Removed `--num-speakers` argument.
+  Added `podcast_narration` to artifact list.
+- `pipeline/script_to_audio_say.py` default script path changed from `out/podcast_script.txt` to
+  `out/podcast_narration.txt` (1-speaker output for TTS).
+- Renamed test files: `test_outline_to_bluesky_post.py` to `test_blog_to_bluesky_post.py`,
+  `test_outline_to_podcast_script.py` to `test_blog_to_podcast_script.py`. Updated imports,
+  fixtures, and assertions.
+- Updated `tests/test_content_pipeline_limits.py` to use blog markdown input and new module names.
+- Added `prompt_loader` to `LOCAL_IMPORT_WHITELIST` in `tests/test_import_requirements.py`.
+
+### Removals and Deprecations
+- Removed per-repo draft caching, `--repo-draft-cache-dir`, `--continue`/`--no-continue` flags
+  from bluesky and podcast stages (replaced by single-pass blog summarization).
+- `speaker_styles.txt` content split into `pipeline/prompts/` files; original file can be deleted.
+
+### Additions and New Features
+- `pipeline/podlib/outline_llm.py` added `strip_xml_wrapper()` helper to strip common XML wrapper
+  tags (`<response>`, `<output>`, `<post>`, `<blog>`, `<podcast_script>`, `<content>`) from LLM
+  output, using `local_llm_wrapper.llm_utils.extract_xml_tag_content` when available.
+
+### Behavior or Interface Changes
+- `pipeline/github_data_to_outline.py` commit messages now keep the first 3 non-empty lines
+  (joined with spaces) instead of only the first line, giving richer context to LLM prompts.
+- `pipeline/github_data_to_outline.py` `build_repo_llm_prompt()` revised to replace speculative
+  sections (Risks, Suggested Next Actions) with grounded sections (Notable Commits with verbatim
+  citations, Summary of what changed) and added few-shot examples and anti-speculation guardrails.
+- `pipeline/github_data_to_outline.py` `build_global_llm_prompt()` simplified from 5 sections to
+  3 (Day Overview, Top Repository Highlights, Summary) with few-shot examples and anti-speculation
+  guardrails.
+- `pipeline/outline_to_blog_post.py` all four prompt builders now include engineer-tone guidance,
+  concrete-noun rules, anti-marketing word list, and speculation guardrails. The two main prompts
+  also include a few-shot example of good output style.
+- `pipeline/outline_to_bluesky_post.py` `--char-limit` default changed from 140 to 280 (Bluesky
+  limit is 300; 280 gives margin).
+- `pipeline/outline_to_bluesky_post.py` all three prompt builders now include platform description,
+  concrete-noun guidance, no-links rule, example output, and speculation guardrails.
+- `pipeline/outline_to_podcast_script.py` all three prompt builders now include speaker role
+  descriptions (host, technical reviewer, context provider), conversational tone guidance,
+  concrete-noun rules, anti-marketing language, speculation guardrails, and a few-shot example
+  exchange.
+- All four content stages (`github_data_to_outline`, `outline_to_blog_post`,
+  `outline_to_bluesky_post`, `outline_to_podcast_script`) now call
+  `outline_llm.strip_xml_wrapper()` after every `client.generate()` to strip XML wrapper tags
+  from model responses.
+
+### Fixes and Maintenance
+- `tests/test_outline_parser.py` updated to expect joined multi-line commit messages after the
+  commit truncation change.
+
 ### Added
 - Patch 1: `fetch_github_data.py` added to collect weekly repo, commit, issue, and pull-request
   records into `out/github_data.jsonl`.
@@ -252,6 +354,8 @@
   computed as `max(750, ceil(2000/(N-1)))`.
 - `pipeline/github_data_to_outline.py` global-stage wording now uses daily/compilation labels
   (removed stale "weekly" wording in progress logs and LLM purpose tags).
+- `automation/run_local_pipeline.py` now supports `--no-api-calls`, which skips fetch and reuses
+  latest cached fetch JSONL so the rest of the pipeline can be tested without GitHub API calls.
 
 ### Validation
 - `python3 -m py_compile fetch_github_data.py outline_github_data.py outline_to_blog_post.py`
@@ -307,6 +411,7 @@
 - `python3.12 -m py_compile pipeline/outline_to_blog_post.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py`
 - `python3.12 -m pytest -q tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py` (pass: `5 passed`)
 - `source source_me.sh && pytest tests/` (pass: `377 passed`)
+- `source source_me.sh && pytest tests/ -q` (pass: `378 passed`)
 - `python3.12 pipeline/outline_to_blog_post.py --help`
 - `python3.12 -m py_compile pipeline/fetch_github_data.py pipeline/outline_github_data.py pipeline/outline_to_blog_post.py pipeline/outline_to_bluesky_post.py pipeline/outline_to_podcast_script.py pipeline/script_to_audio_say.py tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py`
 - `python3.12 -m pytest -q tests/test_pipeline_settings.py tests/test_github_client_rate_limit.py tests/test_content_pipeline_limits.py tests/test_outline_to_blog_post.py` (pass: `19 passed`)

@@ -1,0 +1,33 @@
+You are writing one candidate daily engineering blog draft.
+This draft covers one repository from today's activity.
+Target length: about {{word_target}} words.
+Required format:
+- Markdown only (no HTML).
+- One H1 title chosen by you.
+- Write in human-readable paragraph form.
+- Write in first person singular voice (use 'I' where natural).
+- Human-readable narrative style, not a deterministic outline dump.
+- Include concrete repo metrics and specific commit/issue/PR details.
+- Mention the repo name exactly as provided.
+Tone: Write like a working engineer describing their day to a colleague.
+Use short declarative sentences. Prefer concrete nouns: repo names,
+file names, functions, counts. No metaphors.
+State 2-5 specific changes per repo. Each change must include one anchor:
+a file path, function name, PR number, or commit subject.
+If the input lacks details, say 'No details in data' and move on.
+Do not guess or speculate.
+Avoid marketing language and motivational tone.
+Avoid: 'vibrant', 'treasure trove', 'testament to', 'boasts', 'captivated'.
+Avoid:
+- Writing advice, templates, or educational meta-content about blogging.
+- Reader call-to-action (comments, follow, subscribe, etc.).
+
+Context JSON:
+{{context_json}}
+Example of good output style (do not copy this content, use the actual data):
+'# Toolbar polish and theme work in bkchem
+
+Thirteen commits to bkchem. The big one was a YAML-based light/dark theme
+system replacing the old hardcoded colors (commit: add theme yaml config).
+Also rotated the hex grid from flat-top to pointy-top, which touched eight
+files in the rendering module.'

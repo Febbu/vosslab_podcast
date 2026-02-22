@@ -2,4 +2,4 @@
 brew "python@3.12"
 brew "ollama"
 brew "libsndfile"
-brew "ffmpeg"
+brew "lame"

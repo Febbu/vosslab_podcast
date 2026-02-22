@@ -10,6 +10,8 @@ from podlib import outline_llm
 from podlib import pipeline_settings
 from podlib import pipeline_text_utils
 
+import prompt_loader
+
 
 WORD_RE = re.compile(r"[A-Za-z0-9']+")
 DATE_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -185,28 +187,11 @@ def build_blog_markdown_prompt(outline: dict, word_limit: int) -> str:
 	Build fallback prompt for human-readable Markdown blog generation.
 	"""
 	context_json = json.dumps(build_blog_context(outline), ensure_ascii=True, indent=2)
-	prompt = (
-		"You are writing a daily engineering blog update from GitHub activity data.\n"
-		"Write a human-readable Markdown post for MkDocs Material.\n"
-		f"Target length: about {word_limit} words.\n"
-		"Required format:\n"
-		"- Markdown only (no HTML).\n"
-		"- One H1 title chosen by you.\n"
-		"- Write in human-readable paragraph form.\n"
-		"- Write in first person singular voice (use 'I' where natural).\n"
-		"- Keep structure simple and readable; avoid outline-style section dumping.\n"
-		"- Use short paragraphs; avoid bullet-list-heavy output.\n"
-		"- Keep factual and avoid invented details.\n"
-		"- Include repository names exactly as provided.\n"
-		"- Include concrete numbers from the data (commits/issues/PRs).\n"
-		"- Mention at least two repositories by name.\n"
-		"Avoid these patterns:\n"
-		"- Do not give writing advice or mention 'blueprint' or 'the outline above'.\n"
-		"- Do not ask readers to comment or provide calls-to-action.\n"
-		"- Do not use generic endings like 'We want to hear from you'.\n\n"
-		"Context JSON:\n"
-		f"{context_json}\n"
-	)
+	template = prompt_loader.load_prompt("blog_markdown.txt")
+	prompt = prompt_loader.render_prompt_with_target(template, {
+		"word_limit": str(word_limit),
+		"context_json": context_json,
+	}, target_value=str(word_limit), unit="words", document_name="blog post")
 	return prompt
 
 
@@ -220,13 +205,16 @@ def build_repo_blog_markdown_prompt(
 ) -> str:
 	"""
 	Build one repo-focused draft prompt for multi-pass generation.
+
+	Note: repo_index and repo_total are accepted for caller compatibility
+	but intentionally excluded from the LLM prompt to prevent the model
+	from parroting 'repository N of M' in its output.
 	"""
+	# build context without repo_index/repo_total to avoid echo
 	repo_context = {
 		"user": outline.get("user", "unknown"),
 		"window_start": outline.get("window_start", ""),
 		"window_end": outline.get("window_end", ""),
-		"repo_index": repo_index,
-		"repo_total": repo_total,
 		"repo": {
 			"repo_full_name": repo_bucket.get("repo_full_name", ""),
 			"description": repo_bucket.get("description", ""),
@@ -243,24 +231,12 @@ def build_repo_blog_markdown_prompt(
 		"top_notable_commit_messages": list(outline.get("notable_commit_messages", []))[:12],
 	}
 	context_json = json.dumps(repo_context, ensure_ascii=True, indent=2)
-	return (
-		"You are writing one candidate daily engineering blog draft.\n"
-		f"This draft must focus on repository {repo_index} of {repo_total}.\n"
-		f"Target length: about {word_target} words.\n"
-		"Required format:\n"
-		"- Markdown only (no HTML).\n"
-		"- One H1 title chosen by you.\n"
-		"- Write in human-readable paragraph form.\n"
-		"- Write in first person singular voice (use 'I' where natural).\n"
-		"- Human-readable narrative style, not a deterministic outline dump.\n"
-		"- Include concrete repo metrics and specific commit/issue/PR details.\n"
-		"- Mention the repo name exactly as provided.\n"
-		"Avoid:\n"
-		"- Writing advice, templates, or educational meta-content about blogging.\n"
-		"- Reader call-to-action (comments, follow, subscribe, etc.).\n\n"
-		"Context JSON:\n"
-		f"{context_json}\n"
-	)
+	template = prompt_loader.load_prompt("blog_repo_markdown.txt")
+	prompt = prompt_loader.render_prompt_with_target(template, {
+		"word_target": str(word_target),
+		"context_json": context_json,
+	}, target_value=str(word_target), unit="words", document_name="blog draft")
+	return prompt
 
 
 #============================================
@@ -282,24 +258,12 @@ def build_final_blog_trim_prompt(
 		"selected_repo_markdown": best_draft.get("markdown", ""),
 	}
 	context_json = json.dumps(context, ensure_ascii=True, indent=2)
-	return (
-		"You are revising one daily engineering blog draft.\n"
-		f"Target length: about {word_limit} words.\n"
-		"Use the selected draft below as source material and produce a final post near the target length.\n"
-		"Keep the strongest details and preserve a natural human tone.\n"
-		"Required format:\n"
-		"- Markdown only (no HTML).\n"
-		"- One H1 title chosen by you.\n"
-		"- Write in human-readable paragraph form.\n"
-		"- Write in first person singular voice (use 'I' where natural).\n"
-		"- Natural, human-readable narrative with specific repo details and numbers.\n"
-		"Avoid:\n"
-		"- Writing-advice/meta content.\n"
-		"- Reader call-to-action text.\n"
-		"- Generic filler conclusions.\n\n"
-		"Context JSON:\n"
-		f"{context_json}\n"
-	)
+	template = prompt_loader.load_prompt("blog_trim.txt")
+	prompt = prompt_loader.render_prompt_with_target(template, {
+		"word_limit": str(word_limit),
+		"context_json": context_json,
+	}, target_value=str(word_limit), unit="words", document_name="blog post")
+	return prompt
 
 
 #============================================
@@ -329,25 +293,12 @@ def build_final_blog_expand_prompt(
 		"candidate_drafts": draft_blocks,
 	}
 	context_json = json.dumps(context, ensure_ascii=True, indent=2)
-	min_words = max(1, word_limit // 2)
-	return (
-		"You are assembling the final daily engineering blog post.\n"
-		+ f"Target length: about {word_limit} words.\n"
-		+ f"Required hard range: between {min_words} and {word_limit * 2} words.\n"
-		+ "Use multiple repo drafts as source material and produce one coherent final post near the target length.\n"
-		+ "Required format:\n"
-		+ "- Markdown only (no HTML).\n"
-		+ "- One H1 title chosen by you.\n"
-		+ "- Write in human-readable paragraph form.\n"
-		+ "- Write in first person singular voice (use 'I' where natural).\n"
-		+ "- Keep concrete repo names, metrics, and specific activity details.\n"
-		+ "Avoid:\n"
-		+ "- Writing-advice/meta content.\n"
-		+ "- Reader call-to-action text.\n"
-		+ "- Generic filler conclusions.\n\n"
-		+ "Context JSON:\n"
-		+ f"{context_json}\n"
-	)
+	template = prompt_loader.load_prompt("blog_expand.txt")
+	prompt = prompt_loader.render_prompt_with_target(template, {
+		"word_limit": str(word_limit),
+		"context_json": context_json,
+	}, target_value=str(word_limit), unit="words", document_name="blog post")
+	return prompt
 
 
 #============================================
@@ -551,6 +502,7 @@ def generate_blog_markdown_with_llm(
 				max_tokens=max_tokens,
 			).strip()
 			repo_markdown = normalize_markdown_blog(repo_markdown)
+			repo_markdown = outline_llm.strip_xml_wrapper(repo_markdown)
 			repo_issue = blog_quality_issue(repo_markdown)
 			if repo_issue:
 				if logger:
@@ -570,6 +522,7 @@ def generate_blog_markdown_with_llm(
 					max_tokens=max_tokens,
 				).strip()
 				repo_markdown = normalize_markdown_blog(repo_markdown)
+				repo_markdown = outline_llm.strip_xml_wrapper(repo_markdown)
 				repo_issue = blog_quality_issue(repo_markdown)
 			if repo_issue:
 				if logger:
@@ -614,6 +567,7 @@ def generate_blog_markdown_with_llm(
 			max_tokens=max_tokens,
 		).strip()
 		fallback = normalize_markdown_blog(fallback)
+		fallback = outline_llm.strip_xml_wrapper(fallback)
 		fallback_issue = blog_quality_issue(fallback)
 		if fallback_issue:
 			if logger:
@@ -630,6 +584,7 @@ def generate_blog_markdown_with_llm(
 				max_tokens=max_tokens,
 			).strip()
 			fallback_retry = normalize_markdown_blog(fallback_retry)
+			fallback_retry = outline_llm.strip_xml_wrapper(fallback_retry)
 			if fallback_retry:
 				if logger:
 					retry_words = pipeline_text_utils.count_words(fallback_retry)
@@ -680,6 +635,7 @@ def generate_blog_markdown_with_llm(
 		max_tokens=max_tokens,
 	).strip()
 	final_markdown = normalize_markdown_blog(final_markdown)
+	final_markdown = outline_llm.strip_xml_wrapper(final_markdown)
 	final_issue = blog_quality_issue(final_markdown)
 	if final_issue:
 		if logger:
@@ -697,6 +653,7 @@ def generate_blog_markdown_with_llm(
 			max_tokens=max_tokens,
 		).strip()
 		final_markdown = normalize_markdown_blog(final_markdown)
+		final_markdown = outline_llm.strip_xml_wrapper(final_markdown)
 	final_markdown = enforce_blog_word_band(
 		client,
 		final_markdown,

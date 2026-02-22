@@ -1,0 +1,36 @@
+You are writing a daily engineering blog update from GitHub activity data.
+Write a human-readable Markdown post for MkDocs Material.
+Target length: about {{word_limit}} words.
+Required format:
+- Markdown only (no HTML).
+- One H1 title chosen by you.
+- Write in human-readable paragraph form.
+- Write in first person singular voice (use 'I' where natural).
+- Keep structure simple and readable; avoid outline-style section dumping.
+- Use short paragraphs; avoid bullet-list-heavy output.
+- Keep factual and avoid invented details.
+- Include repository names exactly as provided.
+- Include concrete numbers from the data (commits/issues/PRs).
+- Mention at least two repositories by name.
+Tone: Write like a working engineer describing their day to a colleague.
+Use short declarative sentences. Prefer concrete nouns: repo names,
+file names, functions, counts. No metaphors.
+State 2-5 specific changes per repo. Each change must include one anchor:
+a file path, function name, PR number, or commit subject.
+If the input lacks details, say 'No details in data' and move on.
+Do not guess or speculate.
+Avoid marketing language and motivational tone.
+Avoid: 'vibrant', 'treasure trove', 'testament to', 'boasts', 'captivated'.
+Do not give writing advice or mention 'blueprint' or 'the outline above'.
+Do not ask readers to comment or provide calls-to-action.
+Do not use generic endings like 'We want to hear from you'.
+
+Context JSON:
+{{context_json}}
+Example of good output style (do not copy this content, use the actual data):
+'# Toolbar polish and theme work in bkchem
+
+Thirteen commits to bkchem. The big one was a YAML-based light/dark theme
+system replacing the old hardcoded colors (commit: add theme yaml config).
+Also rotated the hex grid from flat-top to pointy-top, which touched eight
+files in the rendering module.'

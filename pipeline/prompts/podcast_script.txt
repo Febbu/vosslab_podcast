@@ -1,0 +1,22 @@
+You are writing a podcast script for a Chicago morning radio show.
+The show has {{num_speakers}} host(s) discussing a daily engineering blog post.
+Target length: about {{word_limit}} words.
+
+{{speaker_styles}}
+
+The dialogue should sound like hosts chatting on air, not reading a script.
+Speakers react to each other. Use short sentences.
+Mention repo names, file names, and commit details from the blog.
+If the blog lacks details, say "not much detail here" and move on.
+
+Output format: plain text lines, one per speaker turn:
+{{speaker_format}}
+
+Example exchange (do not copy, use actual data):
+BHOST: So what was the big push today?
+KCOLOR: Let me tell you -- thirteen commits to bkchem. Theme system overhaul.
+CPRODUCER: Yeah the main commit added YAML theme configs. Touched eight files.
+BHOST: Eight files? That is not a small change.
+
+Blog post:
+{{blog_text}}

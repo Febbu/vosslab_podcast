@@ -9,11 +9,12 @@ import soundfile
 import torch
 from qwen_tts import Qwen3TTSModel
 
+from podlib import audio_utils
 from podlib import pipeline_settings
 
 
 DEFAULT_SCRIPT_PATH = "out/podcast_script.txt"
-DEFAULT_OUTPUT_PATH = "out/episode.wav"
+DEFAULT_OUTPUT_PATH = "out/episode.mp3"
 
 
 #============================================
@@ -41,7 +42,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--output",
 		default=DEFAULT_OUTPUT_PATH,
-		help="Path to output WAV audio file.",
+		help="Path to output audio file (.mp3 or .wav).",
 	)
 	parser.add_argument(
 		"--settings",
@@ -76,39 +77,6 @@ def parse_args() -> argparse.Namespace:
 	)
 	args = parser.parse_args()
 	return args
-
-
-#============================================
-def parse_script_lines(script_text: str) -> list[tuple[str, str]]:
-	"""
-	Parse ROLE: text lines from script input.
-	"""
-	lines: list[tuple[str, str]] = []
-	for raw in script_text.splitlines():
-		line = raw.strip()
-		if not line:
-			continue
-		if ":" not in line:
-			continue
-		speaker, text = line.split(":", 1)
-		speaker = speaker.strip().upper()
-		text = text.strip()
-		if not speaker or not text:
-			continue
-		lines.append((speaker, text))
-	return lines
-
-
-#============================================
-def ordered_unique_speakers(lines: list[tuple[str, str]]) -> list[str]:
-	"""
-	Return speakers in first-seen order.
-	"""
-	labels = []
-	for speaker, _text in lines:
-		if speaker not in labels:
-			labels.append(speaker)
-	return labels
 
 
 #============================================
@@ -198,7 +166,7 @@ def build_speaker_voice_map(
 #============================================
 def main() -> None:
 	"""
-	Generate one WAV file from an N-speaker podcast script.
+	Generate one audio file from an N-speaker podcast script.
 	"""
 	args = parse_args()
 	settings, _settings_path = pipeline_settings.load_settings(args.settings)
@@ -225,7 +193,7 @@ def main() -> None:
 	log_step("Loading podcast script file.")
 	with open(script_path, "r", encoding="utf-8") as handle:
 		script_text = handle.read()
-	lines = parse_script_lines(script_text)
+	lines = audio_utils.parse_script_lines(script_text)
 	if not lines:
 		raise RuntimeError("No valid SPEAKER: text lines found in script.")
 	log_step(f"Parsed {len(lines)} speaker line(s) from script.")
@@ -239,7 +207,7 @@ def main() -> None:
 	)
 	supported_speakers = model.get_supported_speakers()
 	log_step(f"Model supports {len(supported_speakers)} speaker voice(s).")
-	script_speakers = ordered_unique_speakers(lines)
+	script_speakers = audio_utils.get_unique_speakers(lines)
 	log_step(f"Script uses {len(script_speakers)} unique speaker label(s).")
 	config = load_voice_config(args.voices)
 	log_step("Building speaker-to-voice map.")
@@ -282,9 +250,25 @@ def main() -> None:
 	audio = numpy.concatenate(segments)
 	output_path = os.path.abspath(output_arg)
 	os.makedirs(os.path.dirname(output_path), exist_ok=True)
-	log_step(f"Writing WAV output to {output_path}")
-	soundfile.write(output_path, audio, sample_rate)
-	log_step(f"Wrote {output_path}; total_samples={len(audio)}, sample_rate={sample_rate}")
+
+	# determine if MP3 conversion is needed
+	wants_mp3 = output_path.lower().endswith(".mp3")
+	if wants_mp3:
+		# write WAV as intermediate, then convert to MP3
+		wav_path = output_path.rsplit(".", 1)[0] + ".wav"
+	else:
+		wav_path = output_path
+
+	log_step(f"Writing WAV output to {wav_path}")
+	soundfile.write(wav_path, audio, sample_rate)
+	log_step(f"Wrote WAV: {wav_path}; total_samples={len(audio)}, sample_rate={sample_rate}")
+
+	if wants_mp3:
+		log_step("Converting WAV to MP3 with lame.")
+		audio_utils.convert_to_mp3(wav_path, output_path)
+		# clean up intermediate WAV
+		os.remove(wav_path)
+		log_step(f"Wrote MP3 audio: {output_path}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,14 @@
+A Bluesky post is a short social media update, similar to a tweet.
+You are revising one Bluesky post draft.
+Target length: about {{char_limit}} characters.
+Keep the strongest facts and wording, but pare it down to target length.
+Use concrete nouns: repo names, file names, counts. No metaphors.
+Rules:
+- Output plain text only on one line.
+- Keep repository names and concrete counts factual.
+- No hashtags, no emojis, no links, no call-to-action.
+If the input lacks details, say 'No details in data' and move on.
+Do not guess or speculate.
+
+Context JSON:
+{{context_json}}

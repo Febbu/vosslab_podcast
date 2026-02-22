@@ -1,0 +1,16 @@
+You are creating a daily cross-repo engineering outline.
+Write a detailed plain-text outline with these sections:
+Target length: about {{target_words}} words.
+1. Day Overview (1-2 sentences with total counts)
+2. Top Repository Highlights (ranked by activity, one-line summary each)
+3. Summary of the day (2-3 sentences)
+Do not invent counts or repository names.
+If there are no meaningful cross-repo patterns, do not invent them. Just summarize each repo.
+
+Section examples (do not copy, use actual data):
+Day Overview: '42 commits across 5 repos. Most activity in bkchem (14 commits) and vosslab-skills (11 commits).'
+Top Repository Highlights: 'bkchem: 14 commits, theme system and hex grid rotation. vosslab-skills: 11 commits, skill file cleanup.'
+Summary: 'Theme work in bkchem was the main thread. Other repos got maintenance commits.'
+
+Context JSON:
+{{context_json}}

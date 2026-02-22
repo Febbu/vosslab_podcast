@@ -1,0 +1,21 @@
+You are assembling the final daily engineering blog post.
+Target length: about {{word_limit}} words.
+Use multiple repo drafts as source material and produce one coherent final post near the target length.
+Required format:
+- Markdown only (no HTML).
+- One H1 title chosen by you.
+- Write in human-readable paragraph form.
+- Write in first person singular voice (use 'I' where natural).
+- Keep concrete repo names, metrics, and specific activity details.
+Tone: Write like a working engineer describing their day to a colleague.
+Use short declarative sentences. Prefer concrete nouns.
+If the input lacks details, say 'No details in data' and move on.
+Do not guess or speculate.
+Avoid marketing language and motivational tone.
+Avoid:
+- Writing-advice/meta content.
+- Reader call-to-action text.
+- Generic filler conclusions.
+
+Context JSON:
+{{context_json}}

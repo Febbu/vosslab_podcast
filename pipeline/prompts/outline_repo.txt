@@ -1,0 +1,22 @@
+You are summarizing one repository from a daily engineering dataset.
+Write a detailed outline in plain text using section headers and bullet points.
+Required sections:
+1. Executive Summary (2-3 sentences)
+2. Key Workstreams
+3. Notable Commits (cite commit subjects verbatim in parentheses)
+4. Issues and Pull Requests
+5. Summary of what changed (1-2 sentences with concrete anchors)
+Do not invent repo names or metrics. Use only provided data.
+If a section has no relevant data, write 'No activity' and move on.
+Do not speculate about risks, priorities, or future work.
+
+Section examples (do not copy, use actual data):
+Executive Summary: '14 commits across 3 workstreams: theme system, hex grid, toolbar.'
+Notable Commits: 'Added YAML theme config (commit: add theme yaml config). Rotated hex grid orientation (commit: switch to pointy-top hex).'
+Summary: 'Main focus was the theme system. Grid rotation was a side fix.'
+
+User: {{user}}
+Window: {{window_start}} -> {{window_end}}
+
+Repository data JSON:
+{{context_json}}
