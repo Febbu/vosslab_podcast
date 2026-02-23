@@ -3,10 +3,10 @@ You are refining {{draft_count}} changelog summary drafts into one final summary
 {{drafts_block}}
 
 Rules:
-- Do not add new facts. Use only information present in the drafts above.
-- If drafts disagree on a detail, choose the version that is more specific (file names, function names, PR numbers over vague descriptions).
-- Pick the strongest draft as the base, then selectively borrow concrete details from others. Do not average or blend into blandness.
-- Keep the summary concise. Remove filler and duplicate content.
-- Preserve all concrete identifiers: file paths, function names, commit subjects, and PR numbers.
+- Use only information present in the drafts above.
+- If drafts disagree on a detail, choose the version that best explains what changed and why it matters.
+- Pick the strongest draft as the base, then selectively borrow clear descriptions from others.
+- Keep the summary concise. Focus on features added, bugs fixed, and user-facing improvements.
+- Write in plain language that sounds natural when read aloud on a podcast.
 
-Output only the final summary. No commentary.
+Output only the final summary.

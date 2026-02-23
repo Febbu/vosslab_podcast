@@ -1,3 +1,3 @@
-Summarize the following changelog section. Keep specific file names, function names, commit subjects, PR numbers, and concrete changes. Remove boilerplate headings and redundant formatting. Output plain text, one paragraph.
+Summarize the following changelog section for a general audience. Focus on what changed and why it matters: new features added, bugs fixed, workflows improved, and user-facing behavior changes. Describe changes in plain language a podcast listener could follow. Use only plain English descriptions of features and fixes. Output plain text, one paragraph.
 
 {{chunk_text}}

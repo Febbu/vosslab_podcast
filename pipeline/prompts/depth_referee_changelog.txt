@@ -7,12 +7,13 @@ Candidate {{label_b}}:
 {{draft_b}}
 
 Compare the two candidates on these measurable criteria:
-- Which summary retains more concrete details (file names, function names, PR numbers, commit subjects)?
-- Which summary has less filler and fewer vague statements?
+- Which summary better describes what changed and why it matters to users?
+- Which summary uses plain language and reads more naturally aloud?
 - Which summary is more concise while still covering all key changes?
+- Which summary would sound better on a podcast?
 
 Output your decision in exactly this format:
 <winner>{{label_a}} or {{label_b}}</winner><reason>one sentence explaining why</reason>
 
-Do not add any other text. Your entire response must be the winner and reason tags.
-Example: <winner>A</winner><reason>Draft A preserves more file names and commit details while staying concise.</reason>
+Your entire response must be the winner and reason tags only.
+Example: <winner>A</winner><reason>Draft A describes the impact of each change more clearly in plain language.</reason>

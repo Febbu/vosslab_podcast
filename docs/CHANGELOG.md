@@ -1,5 +1,15 @@
 ## 2026-02-22
 
+### Fixes and Maintenance
+- Rewrote `pipeline/prompts/changelog_chunk_summary.txt` to produce podcast-friendly summaries.
+  Now instructs the LLM to describe what changed and why it matters in plain language, and
+  Uses only positive instructions (what to include) with no negative prompts, since small
+  language models follow "do X" better than "do not do Y". Previous prompt preserved raw
+  technical identifiers that caused downstream stages to generate repetitive metadata dumps.
+- Updated `pipeline/prompts/depth_referee_changelog.txt` and
+  `pipeline/prompts/depth_polish_changelog.txt` to judge and polish drafts on narrative
+  clarity and podcast readability, using only positive instructions throughout.
+
 ### Additions and New Features
 - Added depth pipeline support to `pipeline/summarize_changelog_data.py` via `--depth` flag.
   At depth 2+, multiple changelog summary drafts are generated and refined through
