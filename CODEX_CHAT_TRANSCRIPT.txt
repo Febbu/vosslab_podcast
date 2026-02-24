@@ -129,3 +129,189 @@ Next actions
 1. Implement modular daily pipeline (`logs -> outline -> blog -> script -> audio`) as separate scripts.
 2. Add daily GitHub Actions workflow for artifact chaining.
 3. Integrate external TTS wrapper (`darrenoakey/tts`) in the final audio step.
+
+---
+Session Update: 2026-02-24 (Daily Pipeline Steps 1+2 Scaffold)
+
+What changed
+- Added daily pipeline scaffolding folders:
+  - `pipelines/`
+  - `config/`
+  - `data/`
+- Added shared utility module:
+  - `pipelines/common.py`
+- Added step 1 script:
+  - `pipelines/01_logs_to_outline.py`
+  - Reads JSON/JSONL logs and writes `data/YYYY-MM-DD/outline.json`.
+- Added step 2 script:
+  - `pipelines/02_outline_to_blog.py`
+  - Reads outline and writes `data/YYYY-MM-DD/blog.md`.
+- Added configuration files:
+  - `config/characters.json` (4 characters, bios, default voices)
+  - `config/settings.json` (timezone, run time, retention, model placeholders)
+- Updated `README.md` with a new section for running daily modular steps 1 and 2.
+
+What was tested
+- Ran step 1 and step 2 locally for `2026-02-24`.
+- Verified generated artifacts:
+  - `data/2026-02-24/outline.json`
+  - `data/2026-02-24/blog.md`
+
+Next actions
+1. Implement step 3 (`blog -> podcast_script`) with character-aware output (`script.json` + `script.txt`).
+2. Implement step 4 (`podcast_script -> audio`) via the external TTS wrapper.
+3. Add a daily GitHub Actions workflow chaining these artifacts.
+
+---
+Session Update: 2026-02-24 (Implemented Steps 3+4 + Runner)
+
+What changed
+- Implemented step 3:
+  - `pipelines/03_blog_to_script.py`
+  - Reads `data/YYYY-MM-DD/blog.md` and `config/characters.json`.
+  - Writes `data/YYYY-MM-DD/script.json` and `data/YYYY-MM-DD/script.txt`.
+- Implemented step 4:
+  - `pipelines/04_script_to_audio.py`
+  - Supports `--engine dry-run` (artifact validation) and `--engine qwen` (audio synthesis).
+  - Writes `data/YYYY-MM-DD/audio_manifest.json` in dry-run mode.
+  - Writes `data/YYYY-MM-DD/episode.wav` in qwen mode.
+- Added orchestrator:
+  - `run_daily.py`
+  - Runs steps 1 -> 4 in order for a selected date.
+- Updated `README.md` with commands for steps 3 and 4 and one-command run.
+
+What was tested
+- Step 3 local test succeeded:
+  - Generated `script.json` and `script.txt` for `2026-02-24`.
+- Step 4 dry-run local test succeeded:
+  - Generated `audio_manifest.json` for `2026-02-24`.
+- End-to-end dry-run test succeeded:
+  - `python run_daily.py --date 2026-02-24 --audio-engine dry-run`
+  - Regenerated outline, blog, script, and audio manifest artifacts.
+- Step 4 qwen mode test in this Codex sandbox could not complete due network/DNS resolution failures to `huggingface.co`.
+
+Next actions
+1. On your machine, run step 4 with qwen in `.venv_tts` and verify `data/YYYY-MM-DD/episode.wav`.
+2. Add daily GitHub Actions workflow to run `run_daily.py` and upload artifacts.
+3. Replace or wrap step 4 engine with `darrenoakey/tts` integration path.
+
+---
+Session Update: 2026-02-24 (Apple TTS Fallback + MP3 Path)
+
+What changed
+- Added Apple TTS fallback engine to step 4:
+  - `pipelines/04_script_to_audio.py --engine apple`
+- Apple engine now uses macOS `say` with a single voice for full script text.
+  - Default voice: `Samantha`
+  - Optional override: `APPLE_TTS_VOICE` env var
+- Added optional mp3 conversion to step 4:
+  - `--mp3` creates `episode.mp3` using `ffmpeg`.
+- Added duration validation for Apple output via `ffprobe`.
+  - If generated audio has zero duration, script raises a clear error.
+- Updated `run_daily.py`:
+  - supports `--audio-engine apple`
+  - supports `--mp3`
+- Updated `README.md` with Apple TTS and mp3 commands.
+
+What was tested
+- In this Codex sandbox:
+  - `--engine apple` command runs but generated AIFF had zero duration (environment limitation), and the new validation correctly fails with a clear message.
+- Previously validated in this session:
+  - dry-run and script generation steps are functioning.
+
+Next actions
+1. Run Apple engine locally on your machine terminal to confirm non-zero `episode.aiff` and `episode.mp3`.
+2. If local Apple TTS succeeds, use Apple engine as default temporary production path.
+3. Continue with daily GitHub Action wiring after local audio confirmation.
+
+---
+Session Update: 2026-02-24 (Presenter Simplification + Intro)
+
+What changed
+- Updated step 3 script builder to support no guests and no producer lines.
+- Added presenter-count control:
+  - `pipelines/03_blog_to_script.py --presenters {1|2}`
+  - Default is now `1` presenter.
+- Added presenter self-intros at the start of each generated script.
+  - 1 presenter mode: host introduces themselves.
+  - 2 presenter mode: host + analyst both introduce themselves.
+- Updated orchestrator:
+  - `run_daily.py --presenters {1|2}` now forwards presenter count to step 3.
+- Updated README examples for presenter mode usage.
+
+What was tested
+- Step 3 tested with `--presenters 1` and `--presenters 2`.
+- Verified `script.txt` output now starts with presenter introductions and contains only host/analyst roles.
+- End-to-end dry-run tested with:
+  - `python3 run_daily.py --date 2026-02-24 --presenters 2 --audio-engine dry-run`
+
+Next actions
+1. Use `--presenters 1` as default production mode initially.
+2. Run Apple audio mode locally with `--presenters 1` and confirm voice quality.
+3. Tune intro wording and speaking style once real logs are connected.
+
+---
+Session Update: 2026-02-24 (GitHub Source for Daily Pipeline)
+
+What changed
+- Updated step 1 to support direct GitHub repo activity input:
+  - `pipelines/01_logs_to_outline.py --source github --github-user vosslab`
+  - Filters by selected `--date` (UTC day window).
+  - Captures non-fork repo create/push activity as outline events.
+- Step 1 still supports local logs mode:
+  - `--source logs --logs logs/latest.jsonl`
+- Updated `run_daily.py` to pass source selection and GitHub username.
+- Updated README commands to default to GitHub source and `vosslab` user.
+
+What was tested
+- Full pipeline dry-run tested successfully in logs mode:
+  - `python3 run_daily.py --date 2026-02-24 --source logs --presenters 1 --audio-engine dry-run`
+- GitHub source mode could not be tested in this Codex sandbox due network restrictions, but code path is wired.
+
+Next actions
+1. Run full pipeline on your machine with GitHub source and a known active day.
+2. Use Apple or Qwen audio engine based on stability preference.
+3. Add daily GitHub Actions schedule so it runs without your computer being on.
+
+---
+Session Update: 2026-02-24 (Presenter Identity + GitHub Update Visibility + Central Time)
+
+What changed
+- Host identity updated in `config/characters.json`:
+  - Host name is now `Dr. Neil Voss`.
+- Step 1 (`pipelines/01_logs_to_outline.py`) now supports explicit timezone boundaries for GitHub daily windows:
+  - New flag: `--timezone` (default `America/Chicago`).
+- Step 1 GitHub mode now outputs separate created vs updated metadata:
+  - `created_count`, `updated_count`
+  - `created_repos`, `updated_repos`
+  - `top_points` now starts with both counts and highlights.
+- Step 2 (`pipelines/02_outline_to_blog.py`) now renders clear sections:
+  - New repos list
+  - Updated repos list
+  - Counts for both
+- Step 3 bullet parsing adjusted to ignore placeholder `- None` items.
+- `run_daily.py` now accepts and forwards `--timezone` to step 1 in GitHub mode.
+- README commands updated to include `--timezone America/Chicago`.
+
+What was tested
+- Full pipeline dry-run tested in `logs` mode (sandbox-safe).
+- Verified script output now starts with host intro using `Dr. Neil Voss`.
+- Verified script signals include both "New repos today" and "Updated repos today" entries.
+
+Next actions
+1. Run `run_daily.py` in GitHub mode on a known active date and confirm updated repos are spoken.
+2. If output is still sparse, increase spoken highlights in step 3 from 2 to 3-4 points.
+3. Add daily GitHub Actions schedule after final local validation.
+
+---
+Session Update: 2026-02-24 (GitHub Highlight Ordering)
+
+What changed
+- Updated `pipelines/01_logs_to_outline.py` to keep repo highlight order from GitHub API (newest first) instead of alphabetical order.
+- Deduplication now preserves order for both `created_repos` and `updated_repos`.
+
+What was tested
+- Code path updated and validated syntactically in project environment.
+
+Next actions
+1. Re-run the pipeline in GitHub mode for today and verify spoken highlights match latest updated repos.

@@ -1,0 +1,19 @@
+{
+  "project_name": "vosslab_podcast",
+  "timezone": "America/Los_Angeles",
+  "run_time_local": "06:00",
+  "retention_days": 30,
+  "language": "en",
+  "pipeline": {
+    "step_01": "logs_to_outline",
+    "step_02": "outline_to_blog",
+    "step_03": "blog_to_script",
+    "step_04": "script_to_audio"
+  },
+  "models": {
+    "outline_model": "tbd",
+    "blog_model": "tbd",
+    "script_model": "tbd",
+    "tts_wrapper": "https://github.com/darrenoakey/tts"
+  }
+}

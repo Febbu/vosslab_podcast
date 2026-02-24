@@ -1,0 +1,26 @@
+{
+  "host": {
+    "name": "Dr. Neil Voss",
+    "role": "Host",
+    "bio": "Professor and builder who guides the daily project story with clear context and practical takeaways.",
+    "voice": "speaker_1"
+  },
+  "analyst": {
+    "name": "Riley Chen",
+    "role": "Analyst",
+    "bio": "Explains technical tradeoffs, architecture choices, and implementation details.",
+    "voice": "speaker_2"
+  },
+  "guest": {
+    "name": "Jordan Lee",
+    "role": "Guest",
+    "bio": "Adds context from the product or user side, highlighting impact and open questions.",
+    "voice": "speaker_3"
+  },
+  "producer": {
+    "name": "Sam Rivera",
+    "role": "Producer",
+    "bio": "Wraps episodes with clear next steps and keeps continuity across daily episodes.",
+    "voice": "speaker_4"
+  }
+}

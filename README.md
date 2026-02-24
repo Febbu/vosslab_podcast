@@ -49,3 +49,35 @@ python tts_generate.py
 
 ### Voice config
 Edit `voices.json` to keep consistent roles. Set `guest_voice_override` when you want a different guest speaker for a specific episode.
+
+## Daily Modular Pipeline (Scaffold)
+Steps are intentionally independent and artifact-based:
+
+1. `logs -> outline` via `pipelines/01_logs_to_outline.py`
+2. `outline -> blog` via `pipelines/02_outline_to_blog.py`
+3. `blog -> script` via `pipelines/03_blog_to_script.py`
+4. `script -> audio` via `pipelines/04_script_to_audio.py`
+
+Artifacts are written under `data/YYYY-MM-DD/`.
+
+### Run steps 1 and 2
+```bash
+python pipelines/01_logs_to_outline.py --date 2026-02-24 --source github --github-user vosslab
+python pipelines/02_outline_to_blog.py --date 2026-02-24
+python pipelines/03_blog_to_script.py --date 2026-02-24 --presenters 1
+python pipelines/04_script_to_audio.py --date 2026-02-24 --engine dry-run
+```
+
+### Apple TTS (recommended fallback on macOS)
+```bash
+python pipelines/04_script_to_audio.py --date 2026-02-24 --engine apple --mp3
+```
+Outputs:
+- `data/YYYY-MM-DD/episode.aiff`
+- `data/YYYY-MM-DD/episode.mp3`
+
+### One-command run
+```bash
+python run_daily.py --date 2026-02-24 --source github --github-user vosslab --timezone America/Chicago --presenters 1 --audio-engine dry-run
+python run_daily.py --date 2026-02-17 --source github --github-user vosslab --timezone America/Chicago --presenters 1 --audio-engine apple --mp3
+```
