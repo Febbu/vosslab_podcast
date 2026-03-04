@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,16 +29,99 @@ def _extract_bullets(blog_markdown: str) -> list[str]:
     return bullets
 
 
-def _summarize_activity(outline: dict[str, Any] | None, blog_markdown: str) -> tuple[int, int, list[str], list[str]]:
+def _summarize_activity(
+    outline: dict[str, Any] | None,
+    blog_markdown: str,
+) -> tuple[int, int, list[str], list[str], list[dict[str, Any]], list[dict[str, Any]]]:
     if outline:
         created_count = int(outline.get("created_count", 0))
         updated_count = int(outline.get("updated_count", 0))
         created_repos = [str(r) for r in outline.get("created_repos", []) if str(r).strip()]
         updated_repos = [str(r) for r in outline.get("updated_repos", []) if str(r).strip()]
-        return created_count, updated_count, created_repos, updated_repos
+        created_repo_details = [d for d in outline.get("created_repo_details", []) if isinstance(d, dict)]
+        updated_repo_details = [d for d in outline.get("updated_repo_details", []) if isinstance(d, dict)]
+        return created_count, updated_count, created_repos, updated_repos, created_repo_details, updated_repo_details
 
     bullets = _extract_bullets(blog_markdown)
-    return 0, 0, [], bullets
+    return 0, 0, [], bullets, [], []
+
+
+def _shorten(text: str | None, max_len: int = 96) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[: max_len - 1].rstrip() + "…"
+
+
+def _ordinal_word(day: int) -> str:
+    words = {
+        1: "first",
+        2: "second",
+        3: "third",
+        4: "fourth",
+        5: "fifth",
+        6: "sixth",
+        7: "seventh",
+        8: "eighth",
+        9: "ninth",
+        10: "tenth",
+        11: "eleventh",
+        12: "twelfth",
+        13: "thirteenth",
+        14: "fourteenth",
+        15: "fifteenth",
+        16: "sixteenth",
+        17: "seventeenth",
+        18: "eighteenth",
+        19: "nineteenth",
+        20: "twentieth",
+        21: "twenty first",
+        22: "twenty second",
+        23: "twenty third",
+        24: "twenty fourth",
+        25: "twenty fifth",
+        26: "twenty sixth",
+        27: "twenty seventh",
+        28: "twenty eighth",
+        29: "twenty ninth",
+        30: "thirtieth",
+        31: "thirty first",
+    }
+    return words.get(day, str(day))
+
+
+def _spoken_date(date_text: str) -> str:
+    dt = datetime.strptime(date_text, "%Y-%m-%d")
+    return f"{dt.strftime('%B')} {_ordinal_word(dt.day)}, {dt.year}"
+
+
+def _build_repo_quick_lines(repo_details: list[dict[str, Any]], max_items: int = 2) -> list[str]:
+    lines: list[str] = []
+    for card in repo_details[:max_items]:
+        full_name = str(card.get("full_name") or "").strip()
+        short_name = str(card.get("name") or "").strip()
+        if short_name:
+            display_name = short_name
+        elif "/" in full_name:
+            display_name = full_name.split("/", 1)[1]
+        else:
+            display_name = full_name or "unknown repository"
+        description = _shorten(str(card.get("description") or ""))
+        commit_message = _shorten(str(card.get("latest_commit_message") or ""))
+        language = str(card.get("language") or "").strip()
+
+        about_part = f"The {display_name} repository is {description}" if description else f"The {display_name} repository had activity"
+        if language:
+            about_part += f" ({language})"
+
+        if commit_message:
+            line = f"{about_part}. Latest update: {commit_message}."
+        else:
+            line = f"{about_part}."
+        lines.append(line)
+    return lines
 
 
 def build_script(
@@ -47,21 +131,37 @@ def build_script(
     presenters: int,
     outline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    created_count, updated_count, created_repos, updated_repos = _summarize_activity(outline, blog_markdown)
+    (
+        created_count,
+        updated_count,
+        created_repos,
+        updated_repos,
+        created_repo_details,
+        updated_repo_details,
+    ) = _summarize_activity(outline, blog_markdown)
 
     host = characters["host"]
     analyst = characters["analyst"]
+    spoken_date = _spoken_date(run_date)
+    created_display = [name.split("/", 1)[1] if "/" in name else name for name in created_repos]
+    updated_display = [name.split("/", 1)[1] if "/" in name else name for name in updated_repos]
 
     new_line = (
-        f"Today there were {created_count} new repositories. Highlights: {', '.join(created_repos[:5])}."
+        f"Today there were {created_count} new repositories. Highlights: {', '.join(created_display[:5])}."
         if created_count > 0
         else "There were no new repositories today."
     )
     updated_line = (
-        f"There were {updated_count} updated repositories. Highlights: {', '.join(updated_repos[:8])}."
+        f"There were {updated_count} updated repositories. Highlights: {', '.join(updated_display[:8])}."
         if updated_count > 0
         else "There were no updated repositories today."
     )
+
+    repo_quick_lines = _build_repo_quick_lines(updated_repo_details, max_items=3)
+    if not repo_quick_lines:
+        repo_quick_lines = _build_repo_quick_lines(created_repo_details, max_items=2)
+    if not repo_quick_lines and updated_display:
+        repo_quick_lines = [f"The {name} repository received updates today." for name in updated_display[:3]]
 
     if presenters == 1:
         turns: list[dict[str, str]] = [
@@ -70,7 +170,7 @@ def build_script(
                 "speaker": host["name"],
                 "text": (
                     f"Hi, I'm {host['name']}, your host. "
-                    f"Welcome to the daily build story for {run_date}."
+                    f"Welcome to the daily build story for {spoken_date}."
                 ),
             },
             {
@@ -83,12 +183,24 @@ def build_script(
                 "speaker": host["name"],
                 "text": updated_line,
             },
+        ]
+        for detail_line in repo_quick_lines:
+            turns.append(
+                {
+                    "role": "HOST",
+                    "speaker": host["name"],
+                    "text": detail_line,
+                }
+            )
+        turns.extend(
+            [
             {
                 "role": "HOST",
                 "speaker": host["name"],
-                "text": "That's the update for today. Next run will continue from this baseline.",
+                "text": "That's the update for today. I'll be back tomorrow with the next set of repository changes.",
             },
-        ]
+            ]
+        )
     else:
         turns = [
             {
@@ -96,7 +208,7 @@ def build_script(
                 "speaker": host["name"],
                 "text": (
                     f"Hi, I'm {host['name']}, your host. "
-                    f"Welcome to the daily build story for {run_date}."
+                    f"Welcome to the daily build story for {spoken_date}."
                 ),
             },
             {
@@ -117,12 +229,22 @@ def build_script(
                 "speaker": analyst["name"],
                 "text": updated_line,
             },
+        ]
+        for detail_line in repo_quick_lines:
+            turns.append(
+                {
+                    "role": "ANALYST",
+                    "speaker": analyst["name"],
+                    "text": detail_line,
+                }
+            )
+        turns.append(
             {
                 "role": "HOST",
                 "speaker": host["name"],
                 "text": "That's it for today. We'll continue tomorrow with the next iteration.",
-            },
-        ]
+            }
+        )
 
     return {
         "date": run_date,

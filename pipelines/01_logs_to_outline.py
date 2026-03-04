@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import requests
@@ -54,12 +55,44 @@ def _fetch_repos(user: str, sort: str, token: str | None) -> list[dict[str, Any]
     return payload
 
 
+def _fetch_latest_commit_message(full_name: str, token: str | None) -> str | None:
+    # Best-effort summary of the most recent change in the repo.
+    encoded = quote(full_name, safe="/")
+    url = f"https://api.github.com/repos/{encoded}/commits?per_page=1"
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    response = requests.get(url, headers=headers, timeout=30)
+    if response.status_code >= 400:
+        return None
+    payload = response.json()
+    if not isinstance(payload, list) or not payload:
+        return None
+    commit = payload[0]
+    message = ((commit.get("commit") or {}).get("message") or "").strip()
+    if not message:
+        return None
+    return message.splitlines()[0].strip()
+
+
+def _repo_card(repo: dict[str, Any], latest_commit: str | None = None) -> dict[str, Any]:
+    return {
+        "full_name": repo.get("full_name"),
+        "name": repo.get("name"),
+        "description": repo.get("description"),
+        "language": repo.get("language"),
+        "created_at": repo.get("created_at"),
+        "pushed_at": repo.get("pushed_at"),
+        "latest_commit_message": latest_commit,
+    }
+
+
 def _github_repo_events_for_day(
     user: str,
     run_date: str,
     token: str | None,
     timezone_name: str,
-) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], list[str], list[dict[str, Any]], list[dict[str, Any]]]:
     tz = ZoneInfo(timezone_name)
     day_start_local = datetime.strptime(run_date, "%Y-%m-%d").replace(tzinfo=tz)
     day_end_local = day_start_local + timedelta(days=1)
@@ -70,6 +103,8 @@ def _github_repo_events_for_day(
     events: list[dict[str, Any]] = []
     created_repos: list[str] = []
     updated_repos: list[str] = []
+    created_repo_cards: list[dict[str, Any]] = []
+    updated_repo_cards: list[dict[str, Any]] = []
 
     for repo in created:
         created_at = repo.get("created_at")
@@ -79,6 +114,7 @@ def _github_repo_events_for_day(
         repo_name = repo.get("full_name") or repo.get("name") or "unknown-repo"
         if day_start_local <= t_local < day_end_local:
             created_repos.append(repo_name)
+            created_repo_cards.append(_repo_card(repo))
             events.append(
                 {
                     "actor": user,
@@ -95,6 +131,8 @@ def _github_repo_events_for_day(
         repo_name = repo.get("full_name") or repo.get("name") or "unknown-repo"
         if day_start_local <= t_local < day_end_local:
             updated_repos.append(repo_name)
+            latest_commit = _fetch_latest_commit_message(repo_name, token)
+            updated_repo_cards.append(_repo_card(repo, latest_commit=latest_commit))
             events.append(
                 {
                     "actor": user,
@@ -120,7 +158,18 @@ def _github_repo_events_for_day(
         updated_seen.add(name)
         updated_unique.append(name)
 
-    return events, created_unique, updated_unique
+    def _dedupe_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        unique: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for card in cards:
+            key = str(card.get("full_name") or card.get("name") or "")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            unique.append(card)
+        return unique
+
+    return events, created_unique, updated_unique, _dedupe_cards(created_repo_cards), _dedupe_cards(updated_repo_cards)
 
 
 def build_outline(
@@ -130,9 +179,13 @@ def build_outline(
     story_angle: str,
     created_repos: list[str] | None = None,
     updated_repos: list[str] | None = None,
+    created_repo_details: list[dict[str, Any]] | None = None,
+    updated_repo_details: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     created_repos = created_repos or []
     updated_repos = updated_repos or []
+    created_repo_details = created_repo_details or []
+    updated_repo_details = updated_repo_details or []
 
     top_points: list[str] = []
     top_points.append(f"New repos today: {len(created_repos)}")
@@ -163,6 +216,8 @@ def build_outline(
         "updated_count": len(updated_repos),
         "created_repos": created_repos,
         "updated_repos": updated_repos,
+        "created_repo_details": created_repo_details,
+        "updated_repo_details": updated_repo_details,
         "top_points": top_points,
         "story_angle": story_angle,
     }
@@ -197,7 +252,7 @@ def main() -> None:
 
     if args.source == "github":
         token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
-        events, created_repos, updated_repos = _github_repo_events_for_day(
+        events, created_repos, updated_repos, created_repo_details, updated_repo_details = _github_repo_events_for_day(
             args.github_user,
             context.run_date,
             token,
@@ -210,6 +265,8 @@ def main() -> None:
         events = _load_events(logs_path)
         created_repos = []
         updated_repos = []
+        created_repo_details = []
+        updated_repo_details = []
         source_name = str(logs_path)
 
     outline = build_outline(
@@ -219,6 +276,8 @@ def main() -> None:
         story_angle,
         created_repos=created_repos,
         updated_repos=updated_repos,
+        created_repo_details=created_repo_details,
+        updated_repo_details=updated_repo_details,
     )
 
     out_path = context.run_dir / "outline.json"

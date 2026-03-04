@@ -90,6 +90,55 @@ def _generate_qwen_audio(script: dict[str, Any], output_path: Path, model_id: st
     sf.write(output_path, np.concatenate(segments), sample_rate)
 
 
+def _generate_kokoro_audio(
+    script: dict[str, Any],
+    output_path: Path,
+    kokoro_voice: str,
+    kokoro_speed: float,
+) -> None:
+    try:
+        import numpy as np
+        import soundfile as sf
+        from kokoro import KPipeline
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            "Kokoro dependencies are missing. Install with: "
+            "pip install kokoro soundfile numpy"
+        ) from error
+
+    turns = script.get("turns", [])
+    if not turns:
+        raise RuntimeError("No script turns found.")
+
+    # Use clean spoken text for natural narration (skip role labels like "HOST:").
+    lines = [str(turn.get("text", "")).strip() for turn in turns if str(turn.get("text", "")).strip()]
+    if not lines:
+        raise RuntimeError("No non-empty turns found to synthesize.")
+
+    text = "\n".join(lines)
+    pipeline = KPipeline(lang_code="a")  # American English
+
+    chunks: list[Any] = []
+    sample_rate = 24000
+    for _, _, audio in pipeline(
+        text,
+        voice=kokoro_voice,
+        speed=kokoro_speed,
+        split_pattern=r"\n+",
+    ):
+        if audio is None:
+            continue
+        if hasattr(audio, "detach"):
+            audio = audio.detach().cpu().numpy()
+        chunks.append(np.asarray(audio, dtype=np.float32))
+
+    if not chunks:
+        raise RuntimeError("Kokoro returned no audio chunks.")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(output_path, np.concatenate(chunks), sample_rate)
+
+
 def _available_apple_voices() -> set[str]:
     proc = subprocess.run(["say", "-v", "?"], capture_output=True, text=True, check=True)
     voices: set[str] = set()
@@ -100,7 +149,18 @@ def _available_apple_voices() -> set[str]:
     return voices
 
 
-def _generate_apple_audio(script: dict[str, Any], output_path: Path) -> None:
+def _resolve_apple_voice(requested_voice: str | None, available_voices: set[str]) -> str:
+    if requested_voice and requested_voice in available_voices:
+        return requested_voice
+    default_voice = os.getenv("APPLE_TTS_VOICE", "Samantha")
+    if default_voice in available_voices:
+        return default_voice
+    if "Samantha" in available_voices:
+        return "Samantha"
+    return sorted(available_voices)[0]
+
+
+def _generate_apple_audio(script: dict[str, Any], output_path: Path, apple_voice: str | None = None) -> None:
     turns = script.get("turns", [])
     if not turns:
         raise RuntimeError("No script turns found.")
@@ -109,8 +169,7 @@ def _generate_apple_audio(script: dict[str, Any], output_path: Path) -> None:
     if not available_voices:
         raise RuntimeError("No Apple voices available from `say -v ?`.")
 
-    default_voice = os.getenv("APPLE_TTS_VOICE", "Samantha")
-    voice = default_voice if default_voice in available_voices else sorted(available_voices)[0]
+    voice = _resolve_apple_voice(apple_voice, available_voices)
     full_text = "\n".join(
         f"{turn.get('role', 'HOST')}: {str(turn.get('text', '')).strip()}"
         for turn in turns
@@ -163,7 +222,7 @@ def main() -> None:
     parser.add_argument("--data-dir", default="data", help="Artifact root directory. Default: data")
     parser.add_argument(
         "--engine",
-        choices=["qwen", "apple", "dry-run"],
+        choices=["qwen", "kokoro", "apple", "dry-run"],
         default="dry-run",
         help="Audio engine to use. Default: dry-run",
     )
@@ -174,11 +233,29 @@ def main() -> None:
     )
     parser.add_argument("--language", default="English", help="Spoken language label for Qwen-TTS.")
     parser.add_argument(
+        "--kokoro-voice",
+        default="am_puck",
+        help="Kokoro voice id (for --engine kokoro). Default: am_puck",
+    )
+    parser.add_argument(
+        "--kokoro-speed",
+        type=float,
+        default=1.0,
+        help="Kokoro speech speed multiplier. Default: 1.0",
+    )
+    parser.add_argument("--apple-voice", default=None, help="Override Apple say voice (for --engine apple).")
+    parser.add_argument("--list-apple-voices", action="store_true", help="List installed Apple voices and exit.")
+    parser.add_argument(
         "--mp3",
         action="store_true",
         help="Also generate episode.mp3 using ffmpeg after audio creation.",
     )
     args = parser.parse_args()
+
+    if args.list_apple_voices:
+        for voice in sorted(_available_apple_voices()):
+            print(voice)
+        return
 
     data_dir = Path(args.data_dir)
     context = resolve_run_context(data_dir, args.run_date)
@@ -205,9 +282,16 @@ def main() -> None:
 
     if args.engine == "qwen":
         _generate_qwen_audio(script=script, output_path=output_path, model_id=args.model, language=args.language)
+    elif args.engine == "kokoro":
+        _generate_kokoro_audio(
+            script=script,
+            output_path=output_path,
+            kokoro_voice=args.kokoro_voice,
+            kokoro_speed=args.kokoro_speed,
+        )
     else:
         output_path = context.run_dir / "episode.aiff"
-        _generate_apple_audio(script=script, output_path=output_path)
+        _generate_apple_audio(script=script, output_path=output_path, apple_voice=args.apple_voice)
         if not _audio_has_duration(output_path):
             raise RuntimeError(
                 "Apple TTS produced an audio file with no duration. "

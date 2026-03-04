@@ -315,3 +315,163 @@ What was tested
 
 Next actions
 1. Re-run the pipeline in GitHub mode for today and verify spoken highlights match latest updated repos.
+
+---
+Session Update: 2026-03-04 (dr_voss Merge Step 1 Shortlist)
+
+What changed
+- Added a concrete merge shortlist document:
+  - `docs/DR_VOSS_MERGE_SHORTLIST.md`
+- Document defines a selective merge plan from `dr_voss` into `main` while preserving current architecture.
+- Scope split into:
+  - Phase 1 safe imports now (retry wrapper, Apple TTS utilities, minimal dev deps split)
+  - Phase 2 optional imports later (changelog enrichment, prompt style layer)
+- Explicitly marked what not to merge now (full pipeline replacement, local-llm-wrapper vendor tree, depth orchestration stack).
+
+What was tested
+- Structural review completed against `main..dr_voss` diff and key branch files.
+- No runtime code behavior changed in this step.
+
+Next actions
+1. Implement Phase 1 item 1: retry support in `run_daily.py`.
+2. Implement Phase 1 item 2: improve Apple voice resolution/listing in `pipelines/04_script_to_audio.py`.
+3. Add small tests for runner retry and audio interface behavior.
+
+---
+Session Update: 2026-03-04 (Phase 1 Implementation Started)
+
+What changed
+- Implemented Phase 1 item 1 (runner retries):
+  - Updated `run_daily.py` with per-stage retry support.
+  - New flags:
+    - `--max-retries` (default: 1)
+    - `--retry-wait-seconds` (default: 4.0, with jitter)
+- Implemented Phase 1 item 2 (Apple TTS utility improvements):
+  - Updated `pipelines/04_script_to_audio.py`.
+  - New flags:
+    - `--list-apple-voices`
+    - `--apple-voice <VoiceName>`
+  - Added explicit Apple voice resolution fallback.
+  - Updated `run_daily.py` to pass `--apple-voice` through to step 4.
+- Implemented Phase 1 item 3 (minimal dev deps split):
+  - Added `pip_requirements-dev.txt` with `pytest`.
+- Updated docs in `README.md` for new retry and Apple voice options.
+
+What was tested
+- End-to-end dry-run pipeline test succeeded:
+  - `python3 run_daily.py --date 2026-02-24 --source logs --audio-engine dry-run --max-retries 1 --retry-wait-seconds 0.2`
+- Apple voice listing test succeeded:
+  - `python3 pipelines/04_script_to_audio.py --list-apple-voices`
+
+Next actions
+1. Run GitHub-source production command and confirm stage retries behave as expected under transient failures.
+2. If stable, optionally set `--max-retries 2` for scheduled runs.
+3. Add lightweight tests for retry behavior and argument plumbing.
+
+---
+Session Update: 2026-03-04 (Step 1 + Step 3 Natural Repo Summaries)
+
+What changed
+- Enhanced step 1 GitHub mode (`pipelines/01_logs_to_outline.py`) to enrich outline with per-repo details:
+  - `created_repo_details` and `updated_repo_details`
+  - fields include `full_name`, `description`, `language`, timestamps, and latest commit subject (for updated repos)
+- Step 1 now fetches latest commit subject via GitHub commits API (best-effort) for updated repos.
+- Enhanced step 3 (`pipelines/03_blog_to_script.py`) to generate more natural narration directly from outline metadata:
+  - still reports new/updated counts
+  - adds quick repo context lines: what repo is about + latest update message
+  - defaults to top 2 detailed repo summaries for brevity
+- Updated `README.md` to document new metadata-driven behavior.
+
+What was tested
+- Syntax checks passed for updated scripts via `python3 -m py_compile`.
+- Step 3 tested with a synthetic outline including updated repo details; output included:
+  - correct counts
+  - repo description + latest commit message lines
+- End-to-end dry-run pipeline test passed in logs mode:
+  - `python3 run_daily.py --date 2026-02-24 --source logs --audio-engine dry-run`
+
+Next actions
+1. Run full GitHub-source pipeline on your machine and verify narration quality for real vosslab updates.
+2. Tune number of detailed repo lines (currently 2) if you want shorter/longer episodes.
+3. Optionally add a style mode switch in step 3 (`concise` vs `conversational`).
+
+---
+Session Update: 2026-03-04 (Added Kokoro TTS Engine)
+
+What changed
+- Added new audio backend in step 4:
+  - `pipelines/04_script_to_audio.py --engine kokoro`
+- New Kokoro options:
+  - `--kokoro-voice` (default: `af_puck`)
+  - `--kokoro-speed` (default: `1.0`)
+- Added run orchestrator plumbing in `run_daily.py`:
+  - `--audio-engine kokoro`
+  - `--kokoro-voice`
+  - `--kokoro-speed`
+- Updated README with Kokoro install and usage commands.
+
+What was tested
+- Python syntax checks passed for updated files.
+- Kokoro code path invocation tested in sandbox and produced expected dependency error message when packages are missing.
+
+Next actions
+1. Install Kokoro dependencies locally in your preferred environment.
+2. Run full pipeline with `--audio-engine kokoro --kokoro-voice af_puck --mp3`.
+3. Tune `--kokoro-speed` if pacing needs adjustment.
+
+---
+Session Update: 2026-03-04 (Kokoro Default Voice Correction)
+
+What changed
+- Updated Kokoro default voice from `af_puck` to `am_puck`:
+  - `pipelines/04_script_to_audio.py`
+  - `run_daily.py`
+- Updated README Kokoro examples to use `am_puck`.
+
+What was tested
+- Verified available local Kokoro voice list includes `am_puck` (not `af_puck`).
+
+Next actions
+1. Run pipeline again with Kokoro using default voice (or explicit `--kokoro-voice am_puck`).
+
+---
+Session Update: 2026-03-04 (Natural Script + Spoken Date + Cleaner Kokoro Narration)
+
+What changed
+- Updated `pipelines/03_blog_to_script.py` to improve narration quality:
+  - Date is now spoken as words (example: "February twenty fourth, 2026") instead of numeric format.
+  - Added richer per-repo summary lines from outline metadata (up to 3 updated repos).
+  - Repo summary lines now combine:
+    - what the repo is about (description/language)
+    - what changed (latest commit subject)
+  - Added fallback lines when commit/details are missing.
+- Updated `pipelines/04_script_to_audio.py` Kokoro path:
+  - Removed spoken role labels (it no longer reads "HOST:" out loud).
+  - Kokoro now reads clean text-only narration for more natural delivery.
+
+What was tested
+- Syntax checks passed for updated scripts.
+- Step 3 generated script verified to include:
+  - spoken-word date format
+  - repo context + update detail lines
+  - cleaner closing line
+
+Next actions
+1. Run full pipeline with Kokoro and confirm the generated audio now sounds natural without role label reading.
+2. If desired, tune summary verbosity (e.g., 2 vs 3 repo detail lines).
+
+---
+Session Update: 2026-03-04 (Repo Name Speech Cleanup)
+
+What changed
+- Updated `pipelines/03_blog_to_script.py` so narration uses short repo names instead of owner-prefixed names.
+- Spoken lines now say:
+  - `organic-eight-ball`
+  - `The organic-eight-ball repository ...`
+  instead of `vosslab/organic-eight-ball`.
+
+What was tested
+- Regenerated script for `2026-02-24` and verified highlights + detail lines use short names.
+
+Next actions
+1. Re-run audio generation to apply updated script wording in final episode output.

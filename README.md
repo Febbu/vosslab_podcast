@@ -54,8 +54,10 @@ Edit `voices.json` to keep consistent roles. Set `guest_voice_override` when you
 Steps are intentionally independent and artifact-based:
 
 1. `logs -> outline` via `pipelines/01_logs_to_outline.py`
+   - In GitHub mode, includes repo metadata (`description`, `language`) and latest commit subject for updated repos.
 2. `outline -> blog` via `pipelines/02_outline_to_blog.py`
 3. `blog -> script` via `pipelines/03_blog_to_script.py`
+   - Uses outline metadata to narrate quick “what this repo is” + “what changed” summaries.
 4. `script -> audio` via `pipelines/04_script_to_audio.py`
 
 Artifacts are written under `data/YYYY-MM-DD/`.
@@ -76,8 +78,29 @@ Outputs:
 - `data/YYYY-MM-DD/episode.aiff`
 - `data/YYYY-MM-DD/episode.mp3`
 
+Optional:
+- list voices: `python pipelines/04_script_to_audio.py --list-apple-voices`
+- pick voice: `python pipelines/04_script_to_audio.py --date 2026-02-24 --engine apple --apple-voice Samantha --mp3`
+
+### Kokoro TTS (free local neural voice)
+Install once in your active environment:
+```bash
+pip install kokoro soundfile numpy
+```
+
+Run with Puck voice:
+```bash
+python pipelines/04_script_to_audio.py --date 2026-02-24 --engine kokoro --kokoro-voice am_puck --kokoro-speed 1.0 --mp3
+```
+
 ### One-command run
 ```bash
 python run_daily.py --date 2026-02-24 --source github --github-user vosslab --timezone America/Chicago --presenters 1 --audio-engine dry-run
 python run_daily.py --date 2026-02-17 --source github --github-user vosslab --timezone America/Chicago --presenters 1 --audio-engine apple --mp3
+python run_daily.py --date 2026-02-24 --audio-engine kokoro --kokoro-voice am_puck --mp3
+```
+
+Retry controls for unstable stages:
+```bash
+python run_daily.py --date 2026-02-24 --audio-engine qwen --mp3 --max-retries 2 --retry-wait-seconds 6
 ```
