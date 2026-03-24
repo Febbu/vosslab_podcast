@@ -42,11 +42,20 @@ def main() -> None:
     parser.add_argument("--github-user", default="vosslab", help="GitHub username when --source github.")
     parser.add_argument("--timezone", default="America/Chicago", help="Timezone for daily boundary in step 01.")
     parser.add_argument("--data-dir", default="data", help="Artifact root directory.")
-    parser.add_argument("--audio-engine", choices=["dry-run", "qwen", "kokoro", "apple"], default="dry-run")
+    parser.add_argument("--audio-engine", choices=["dry-run", "qwen", "kokoro", "apple"], default="kokoro")
+    parser.add_argument("--writer", choices=["deterministic", "llm"], default="llm")
+    parser.add_argument("--llm-transport", choices=["apple", "ollama", "auto"], default="auto")
+    parser.add_argument("--llm-model", default=None)
+    parser.add_argument("--llm-max-tokens", type=int, default=900)
+    parser.add_argument("--referee", choices=["none", "llm"], default="llm")
+    parser.add_argument("--referee-transport", choices=["apple", "ollama", "auto"], default="auto")
+    parser.add_argument("--referee-model", default=None)
+    parser.add_argument("--referee-max-tokens", type=int, default=500)
     parser.add_argument("--apple-voice", default=None, help="Apple voice override when --audio-engine apple.")
     parser.add_argument("--kokoro-voice", default="am_puck", help="Kokoro voice id when --audio-engine kokoro.")
     parser.add_argument("--kokoro-speed", type=float, default=1.0, help="Kokoro speed when --audio-engine kokoro.")
-    parser.add_argument("--mp3", action="store_true", help="Also generate mp3 in step 04.")
+    parser.add_argument("--mp3", dest="mp3", action="store_true", default=True, help="Also generate mp3 in step 04.")
+    parser.add_argument("--no-mp3", dest="mp3", action="store_false", help="Skip mp3 generation in step 04.")
     parser.add_argument("--presenters", type=int, choices=[1, 2], default=1, help="Presenters count for step 03.")
     parser.add_argument("--max-retries", type=int, default=1, help="Retries per stage on failure. Default: 1")
     parser.add_argument(
@@ -69,6 +78,12 @@ def main() -> None:
         step1.extend(["--logs", args.logs])
     _run_with_retry("01_logs_to_outline", step1, args.max_retries, args.retry_wait_seconds)
     _run_with_retry(
+        "01_validate_outline",
+        [sys.executable, "pipelines/01_validate_outline.py", *common_args],
+        args.max_retries,
+        args.retry_wait_seconds,
+    )
+    _run_with_retry(
         "02_outline_to_blog",
         [sys.executable, "pipelines/02_outline_to_blog.py", *common_args],
         args.max_retries,
@@ -76,7 +91,33 @@ def main() -> None:
     )
     _run_with_retry(
         "03_blog_to_script",
-        [sys.executable, "pipelines/03_blog_to_script.py", "--presenters", str(args.presenters), *common_args],
+        [
+            sys.executable,
+            "pipelines/03_blog_to_script.py",
+            "--presenters",
+            str(args.presenters),
+            "--writer",
+            args.writer,
+            "--llm-transport",
+            args.llm_transport,
+            "--llm-max-tokens",
+            str(args.llm_max_tokens),
+            "--referee",
+            args.referee,
+            "--referee-transport",
+            args.referee_transport,
+            "--referee-max-tokens",
+            str(args.referee_max_tokens),
+            *common_args,
+        ]
+        + (["--llm-model", args.llm_model] if args.llm_model else [])
+        + (["--referee-model", args.referee_model] if args.referee_model else []),
+        args.max_retries,
+        args.retry_wait_seconds,
+    )
+    _run_with_retry(
+        "03_validate_script",
+        [sys.executable, "pipelines/03_validate_script.py", *common_args],
         args.max_retries,
         args.retry_wait_seconds,
     )

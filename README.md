@@ -5,7 +5,7 @@ Generates a weekly GitHub repo digest and a simple podcast-style script.
 ## What it does
 - Fetches repos from GitHub (created + pushed)
 - Filters to last 7 days
-- Excludes forks
+- Tracks original repos and forks
 - Writes `out/digest.json` and `out/script.txt`
 
 ## Usage (local)
@@ -58,6 +58,7 @@ Steps are intentionally independent and artifact-based:
 2. `outline -> blog` via `pipelines/02_outline_to_blog.py`
 3. `blog -> script` via `pipelines/03_blog_to_script.py`
    - Uses outline metadata to narrate quick “what this repo is” + “what changed” summaries.
+   - Optional local LLM writer mode available with `--writer llm`.
 4. `script -> audio` via `pipelines/04_script_to_audio.py`
 
 Artifacts are written under `data/YYYY-MM-DD/`.
@@ -69,6 +70,34 @@ python pipelines/02_outline_to_blog.py --date 2026-02-24
 python pipelines/03_blog_to_script.py --date 2026-02-24 --presenters 1
 python pipelines/04_script_to_audio.py --date 2026-02-24 --engine dry-run
 ```
+
+### Optional local LLM writer for Step 3
+This keeps Step 1 factual and lets a local text model rewrite the spoken script.
+
+Example:
+```bash
+python pipelines/03_blog_to_script.py --date 2026-02-24 --presenters 1 --writer llm --llm-transport auto
+```
+
+Or through the full runner:
+```bash
+python run_daily.py --date 2026-02-24 --writer llm --llm-transport auto --audio-engine kokoro --mp3
+```
+
+Notes:
+- The local LLM wrapper is vendored in `local-llm-wrapper/`.
+- `--llm-transport apple` uses Apple Foundation Models.
+- `--llm-transport ollama` uses a local Ollama model.
+- If the LLM path fails, Step 3 falls back to the deterministic script.
+
+Optional referee pass for Step 3:
+```bash
+python run_daily.py --date 2026-02-24 --writer llm --llm-transport auto --referee llm --referee-transport auto --audio-engine kokoro --mp3
+```
+
+- The referee only checks Step 3 output.
+- Deterministic validators still run after steps 1 and 3.
+- If the referee rejects the first LLM draft, Step 3 tries one rewrite with feedback.
 
 ### Apple TTS (recommended fallback on macOS)
 ```bash

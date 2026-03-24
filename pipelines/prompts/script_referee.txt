@@ -1,0 +1,24 @@
+You are reviewing a daily repository podcast script for factual coverage and clarity.
+
+Rules:
+- Use only the activity summary as ground truth.
+- Do not invent facts.
+- Check whether the script covers the important non-empty activity buckets:
+  - new original repositories
+  - updated original repositories
+  - newly created forks
+  - updated forks
+- Check whether the script sounds natural and avoids repetitive empty-bucket phrasing.
+- Check whether repo names are spoken as repo names only, not owner slash repo.
+
+Output format:
+- Start with exactly one line: PASS or FAIL
+- Then write up to 4 short bullet lines starting with "- "
+- If PASS, bullets should contain only minor optional suggestions.
+- If FAIL, bullets must explain the concrete issues that should be fixed.
+
+Activity summary:
+{{activity_summary}}
+
+Script under review:
+{{script_text}}

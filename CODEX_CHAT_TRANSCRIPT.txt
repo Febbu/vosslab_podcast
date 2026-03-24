@@ -475,3 +475,291 @@ What was tested
 
 Next actions
 1. Re-run audio generation to apply updated script wording in final episode output.
+
+---
+Session Update: 2026-03-13 (Substance Upgrade: Multi-Commit Summaries)
+
+What changed
+- Updated [pipelines/01_logs_to_outline.py](/Users/pierre/job_campus/vosslab_podcast/pipelines/01_logs_to_outline.py) to fetch up to 3 recent commit subjects per updated repo instead of only the latest one.
+- Updated [pipelines/03_blog_to_script.py](/Users/pierre/job_campus/vosslab_podcast/pipelines/03_blog_to_script.py) to use those commit subjects when generating spoken repo summaries.
+- Step 3 now prefers phrasing like “Recent work included X, and Y” when two meaningful commit subjects are available.
+
+What was tested
+- Syntax check passed for updated Step 1 and Step 3.
+- Existing saved outline was inspected and confirmed to predate the new multi-commit field, so the next real GitHub run will populate the richer summary data.
+
+Next actions
+1. Run the normal daily command again to regenerate [data/2026-02-24/outline.json](/Users/pierre/job_campus/vosslab_podcast/data/2026-02-24/outline.json) with `recent_commit_messages`.
+2. Listen to whether the repo summaries now sound more informative without becoming too long.
+
+---
+Session Update: 2026-03-13 (Step 1 Change Intelligence Expansion)
+
+What changed
+- Expanded [pipelines/01_logs_to_outline.py](/Users/pierre/job_campus/vosslab_podcast/pipelines/01_logs_to_outline.py) from simple metadata collection into deeper change analysis for updated repos.
+- Step 1 now fetches, per updated repo:
+  - commits within the selected day window
+  - commit details for those commits
+  - changed filenames
+  - aggregate additions/deletions
+  - touched areas such as `audio`, `pipeline`, `docs`, `tests`, `config`, `code`
+  - inferred change types such as `feature`, `bugfix`, `docs`, `tests`, `refactor`
+  - a deterministic `human_summary`
+- Updated [pipelines/03_blog_to_script.py](/Users/pierre/job_campus/vosslab_podcast/pipelines/03_blog_to_script.py) to prefer that `human_summary` when speaking repo updates.
+
+What was tested
+- Syntax checks passed for updated Step 1 and Step 3.
+- Synthetic outline test confirmed Step 3 now speaks the richer `human_summary` text instead of the older metadata-only phrasing.
+
+Next actions
+1. Run the standard daily command to regenerate a real outline with commit/file-derived summaries.
+2. Listen for whether the new summaries are informative enough or need shorter/cleaner phrasing.
+
+---
+Session Update: 2026-03-13 (Step 1 Context Expansion: README + Project Files + Patch Hints)
+
+What changed
+- Expanded [pipelines/01_logs_to_outline.py](/Users/pierre/job_campus/vosslab_podcast/pipelines/01_logs_to_outline.py) to fetch repository context, not just activity metadata.
+- Step 1 now attempts to read:
+  - `README.md` / equivalent README files
+  - common project files such as `pyproject.toml`, `package.json`, `Cargo.toml`, `requirements.txt`
+- Step 1 also extracts small patch hints from changed files in commit details.
+- The deterministic `human_summary` for updated repos now blends:
+  - README/project context
+  - recent commit subjects
+  - top touched files
+  - touched areas
+  - additions/deletions
+  - one short patch hint when available
+
+What was tested
+- Syntax check passed after the Step 1 expansion.
+
+Next actions
+1. Run the normal GitHub pipeline command again to populate the richer context fields in the daily outline.
+2. Listen to whether repo explanations now feel grounded enough in actual project purpose and concrete code change details.
+
+---
+Session Update: 2026-03-17 (Fork Inclusion + Changelog Context)
+
+What changed
+- Updated `pipelines/01_logs_to_outline.py` so GitHub step 1 no longer excludes forks from created/updated repo reporting.
+- Added changelog discovery for repo context with priority on:
+  - `docs/CHANGELOG.md`
+  - `CHANGELOG.md`
+  - `changelog.md`
+  - `docs/changelog.md`
+- Added deterministic changelog summary extraction and fed it into repo `human_summary` generation.
+- Repo detail cards now record whether a repo is a fork.
+- Outline top points now include fork counts when forks appear in created or updated repo sets.
+
+What was tested
+- `python3 -m py_compile pipelines/01_logs_to_outline.py pipelines/03_blog_to_script.py`
+- Verified existing outline artifact shape still loads.
+
+Next actions
+1. Run step 1 again against GitHub to regenerate `outline.json` with fork and changelog data.
+2. Listen to regenerated script/audio and trim summary density if changelog text is too verbose.
+3. If needed, add README/changelog fallback weighting in script generation so narration stays concise.
+
+---
+Session Update: 2026-03-17 (Fork Activity Narration)
+
+What changed
+- Added explicit fork counters to `outline.json` (`fork_created_count`, `fork_updated_count`).
+- Updated `pipelines/03_blog_to_script.py` so the spoken script always mentions fork activity, including when there was none.
+
+What was tested
+- `python3 -m py_compile pipelines/01_logs_to_outline.py pipelines/03_blog_to_script.py`
+
+Next actions
+1. Regenerate today's outline/script so fork narration appears in audio.
+2. Decide whether forked repos should be described separately from original repos in the spoken summary.
+
+---
+Session Update: 2026-03-17 (Full Work Narration Split)
+
+What changed
+- Updated `pipelines/03_blog_to_script.py` so spoken output now separates:
+  - new original repositories
+  - updated original repositories
+  - newly created forks
+  - updated forks
+- Added detail-line generation across all four buckets so Dr. Neil Voss can describe the full tracked work instead of only one subset.
+
+What was tested
+- `python3 -m py_compile pipelines/03_blog_to_script.py pipelines/01_logs_to_outline.py`
+
+Next actions
+1. Regenerate today's script and audio to hear the new per-bucket narration.
+2. If the script becomes too long on busy days, add per-bucket caps or a concise mode.
+
+---
+Session Update: 2026-03-17 (Less Repetitive Empty-Day Narration)
+
+What changed
+- Updated `pipelines/03_blog_to_script.py` so empty activity buckets are no longer spoken as repetitive standalone lines.
+- Added a single quiet-day sentence when there are no new repos, updates, or fork changes.
+- Added helper logic so only non-empty narration lines are emitted into the script.
+
+What was tested
+- `python3 -m py_compile pipelines/03_blog_to_script.py`
+
+Next actions
+1. Regenerate a quiet day and an active day to confirm the pacing sounds natural in both cases.
+2. If needed, merge related active buckets into a single sentence for even smoother delivery.
+
+---
+Session Update: 2026-03-17 (Minimal Local LLM Writer Integration)
+
+What changed
+- Imported `local-llm-wrapper/` from `dr_voss` as a reusable local text-generation layer.
+- Added `pipelines/llm_writer.py` as a small adapter around the vendored wrapper.
+- Added editable prompt template:
+  - `pipelines/prompts/script_writer.txt`
+- Updated `pipelines/03_blog_to_script.py` to support:
+  - `--writer deterministic|llm`
+  - `--llm-transport apple|ollama|auto`
+  - `--llm-model`
+  - `--llm-max-tokens`
+- Updated `run_daily.py` to pass the new writer arguments through step 3.
+- Updated `README.md` with LLM writer usage notes.
+
+What was tested
+- `python3 -m py_compile pipelines/03_blog_to_script.py pipelines/llm_writer.py run_daily.py`
+- `python3 pipelines/03_blog_to_script.py --help`
+
+Next actions
+1. Run a local LLM-backed script generation on your machine and compare it against deterministic output.
+2. If the LLM output is good, decide whether `--writer llm` should become the default.
+3. If needed, tune `pipelines/prompts/script_writer.txt` rather than changing step 1 facts.
+
+---
+Session Update: 2026-03-23 (Validation After Steps 1 and 3)
+
+What changed
+- Added deterministic validation helpers in `pipelines/validators.py`.
+- Added `pipelines/01_validate_outline.py` to validate outline counts, repo-detail alignment, and fork counters after step 1.
+- Added `pipelines/03_validate_script.py` to validate script grounding and quiet-day behavior after step 3.
+- Updated `run_daily.py` to run validation immediately after step 1 and step 3 before continuing.
+
+What was tested
+- `python3 -m py_compile pipelines/validators.py pipelines/01_validate_outline.py pipelines/03_validate_script.py run_daily.py`
+- `python3 pipelines/01_validate_outline.py --date 2026-03-17`
+- `python3 pipelines/03_validate_script.py --date 2026-03-17`
+
+Next actions
+1. Run a current-day pipeline to confirm validation passes on active repo days.
+2. Tighten script validation rules if LLM output starts omitting important buckets.
+3. Consider a retry-with-feedback path when validation fails for `--writer llm`.
+
+---
+Session Update: 2026-03-23 (Optional LLM Referee For Step 3)
+
+What changed
+- Added `pipelines/prompts/script_referee.txt` for a focused Step 3 review pass.
+- Extended `pipelines/llm_writer.py` with:
+  - optional revision feedback for script generation
+  - `review_script_turns(...)` for PASS/FAIL referee checks
+- Updated `pipelines/03_blog_to_script.py` to support:
+  - `--referee none|llm`
+  - `--referee-transport apple|ollama|auto`
+  - `--referee-model`
+  - `--referee-max-tokens`
+- When `--referee llm` is enabled, Step 3 now:
+  - generates the first LLM script
+  - runs deterministic validation
+  - asks the referee LLM to review it
+  - retries one rewrite with referee feedback if needed
+- Updated `run_daily.py` and `README.md` for the new referee flags.
+
+What was tested
+- `python3 -m py_compile pipelines/03_blog_to_script.py pipelines/llm_writer.py run_daily.py`
+- `python3 pipelines/03_blog_to_script.py --help`
+- `python3 run_daily.py --help`
+
+Next actions
+1. Run one LLM script with referee enabled on your machine and compare it to the non-referee version.
+2. Tighten the referee prompt if it is too strict or too weak.
+3. If the referee proves useful, consider defaulting it on only when `--writer llm` is used.
+
+---
+Session Update: 2026-03-23 (Run Daily Defaults Simplified)
+
+What changed
+- Updated `run_daily.py` defaults so the standard stack runs without a long flag list:
+  - `--writer llm`
+  - `--referee llm`
+  - `--audio-engine kokoro`
+  - `--mp3` enabled by default
+- Kept `--date` override behavior unchanged.
+- Added `--no-mp3` for cases where audio conversion should stop at WAV/AIFF output.
+
+What was tested
+- `python3 -m py_compile run_daily.py`
+- `python3 run_daily.py --help`
+
+Next actions
+1. Verify the simplified default command on your machine.
+2. If needed, move these defaults later into `config/settings.json`.
+
+---
+Session Update: 2026-03-23 (Explicit Repo Context And Change Fields)
+
+What changed
+- Updated `pipelines/01_logs_to_outline.py` so each repo detail card now carries explicit structured fields:
+  - `repo_purpose`
+  - `change_summary`
+  - `why_it_matters`
+- Purpose now prefers description, README, and project-file context.
+- Change summary now prefers changelog, then commit-log and file/area signals.
+- Why-it-matters now explains impacted files/areas or change scope.
+- Updated `pipelines/03_blog_to_script.py` so spoken repo lines now explicitly separate:
+  - what the repo is about
+  - what changed
+  - why it matters
+- Tightened `pipelines/validators.py` so repo detail cards must include those fields.
+
+What was tested
+- `python3 -m py_compile pipelines/01_logs_to_outline.py pipelines/03_blog_to_script.py pipelines/validators.py`
+- `python3 pipelines/03_blog_to_script.py --help`
+
+Next actions
+1. Regenerate a current-day outline so the new repo fields are populated.
+2. Listen to the updated narration and trim sentence density if some repos become too verbose.
+3. If useful, rank repos so only the strongest context-rich changes get the longest explanations.
+
+---
+Session Update: 2026-03-23 (Paginated Repo Discovery)
+
+What changed
+- Fixed `pipelines/01_logs_to_outline.py` repo discovery to paginate GitHub `/users/{user}/repos` results instead of only reading the first 100 repos.
+- This prevents updated or newly created repos from being silently missed when the account has more than 100 repos.
+
+What was tested
+- `python3 -m py_compile pipelines/01_logs_to_outline.py`
+
+Next actions
+1. Re-run the affected date so missing repos can be rediscovered.
+2. If any repo is still missing, inspect its exact `pushed_at` timestamp versus the selected timezone window.
+
+---
+Session Update: 2026-03-23 (Commit-Window Discovery + Time Window Logging)
+
+What changed
+- Step 1 updated-repo discovery now uses per-repo commit-window queries instead of relying on `pushed_at` sort filtering.
+- Added commit timestamp capture on updated repo detail cards via `commit_timestamps`.
+- Added explicit day-window metadata to outline output:
+  - `timezone`
+  - `window_local_start`
+  - `window_local_end`
+  - `window_utc_start`
+  - `window_utc_end`
+- This makes midnight boundary debugging much more concrete.
+
+What was tested
+- `python3 -m py_compile pipelines/01_logs_to_outline.py`
+
+Next actions
+1. Re-run March 3 and inspect whether `py-movie-media-manager` now appears through commit-window discovery.
+2. If still missing, compare its exact commit timestamps against the recorded local/UTC window in `outline.json`.

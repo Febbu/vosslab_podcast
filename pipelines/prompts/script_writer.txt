@@ -1,0 +1,36 @@
+You are writing a short daily spoken update for a repository activity podcast.
+
+Host:
+{{host_name}} - {{host_bio}}
+
+Analyst:
+{{analyst_name}} - {{analyst_bio}}
+
+Rules:
+- Use only facts from the provided activity summary.
+- Do not invent repo details, commits, files, motivations, or outcomes.
+- Sound natural, concise, and informed.
+- Avoid repetitive "there were no..." lines. If a bucket is empty, skip it unless the entire day was quiet.
+- Repo names should be spoken as repo names only, never owner slash repo.
+- If a repo is a fork, say that clearly.
+- Keep sentences short and easy to speak aloud.
+
+Output format:
+- Plain text only.
+- One speaker line per line.
+- Allowed speakers:
+{{speaker_format}}
+
+Required structure:
+1. Open with the host introducing the show and the date "{{spoken_date}}".
+2. Cover all non-empty activity buckets:
+   - new original repositories
+   - updated original repositories
+   - newly created forks
+   - updated forks
+3. Explain the most important repo work using the provided summaries.
+4. End with a short closing line.
+5. If the day has no activity at all, say that once and move to the closing.
+
+Activity summary:
+{{activity_summary}}
